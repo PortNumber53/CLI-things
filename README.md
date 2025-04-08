@@ -1,8 +1,11 @@
 # CLI-things
 
+tap tap, is this thing working?
+[![Go Tests](https://github.com/PortNumber53/CLI-things/actions/workflows/go-tests.yml/badge.svg)](https://github.com/PortNumber53/CLI-things/actions/workflows/go-tests.yml)
+
 ## env-anonymizer
 
-A CLI utility for generating `.env.example` files while preserving comments and file structure. 
+A CLI utility for generating `.env.example` files while preserving comments and file structure.
 
 ### Features
 - Reads from `.env` and optional `.env.local` files
