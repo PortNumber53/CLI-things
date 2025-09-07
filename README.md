@@ -73,7 +73,7 @@ DB_MIGRATIONS_DIR=/path/to/migrations
 
 Notes:
 - `DB_PORT` defaults to `5432` if not set.
-- `DB_SSLMODE` defaults to `disabled` if not set.
+- `DB_SSLMODE` defaults to `disable` if not set (valid values: `disable`, `require`, `verify-ca`, `verify-full`).
 
 ### Commands & Aliases
 
