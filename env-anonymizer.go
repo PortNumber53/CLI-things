@@ -94,16 +94,19 @@ func generateExampleFile(envPath, localPath, outputPath string) error {
 // processEnvFile reads a single env file, parses it, and updates the seenKeys and outputLines.
 // If includeNonVariables is true, comments and blank lines are added to outputLines.
 func processEnvFile(filePath string, seenKeys map[string]struct{}, outputLines *[]string, includeNonVariables bool) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err // Return error to be handled by caller (might be os.ErrNotExist)
-	}
-	defer file.Close()
+    file, err := os.Open(filePath)
+    if err != nil {
+        return err // Return error to be handled by caller (might be os.ErrNotExist)
+    }
+    defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		originalLine := scanner.Text() // Keep original for comments/blanks
+    scanner := bufio.NewScanner(file)
+    // Increase the scanner buffer to handle long lines (up to ~1MB)
+    buf := make([]byte, 0, 64*1024)
+    scanner.Buffer(buf, 1024*1024)
+    for scanner.Scan() {
+        line := strings.TrimSpace(scanner.Text())
+        originalLine := scanner.Text() // Keep original for comments/blanks
 
 		// Handle Comments and Blank Lines
 		if len(line) == 0 || strings.HasPrefix(line, "#") {
@@ -114,8 +117,8 @@ func processEnvFile(filePath string, seenKeys map[string]struct{}, outputLines *
 		}
 
 		// Handle Key-Value Pairs
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
+        parts := strings.SplitN(line, "=", 2)
+        if len(parts) != 2 {
 			// Line doesn't contain '=', treat as malformed or just a key without value?
 			// For safety/simplicity, we'll skip lines without '='.
 			// If includeNonVariables, maybe add as a comment? For now, skip.
@@ -126,9 +129,13 @@ func processEnvFile(filePath string, seenKeys map[string]struct{}, outputLines *
 			continue
 		}
 
-		key := strings.TrimSpace(parts[0])
-		// Basic validation: Ensure key is not empty and doesn't contain problematic chars (optional)
-		if key == "" {
+        key := strings.TrimSpace(parts[0])
+        // Support shell-style `export KEY=val` by stripping the prefix
+        if strings.HasPrefix(strings.ToLower(key), "export ") {
+            key = strings.TrimSpace(key[len("export "):])
+        }
+        // Basic validation: Ensure key is not empty and doesn't contain problematic chars (optional)
+        if key == "" {
 			if includeNonVariables {
 				fmt.Fprintf(os.Stderr, "Warning: Skipping line with empty key in %s: %s\n", filePath, originalLine)
 				*outputLines = append(*outputLines, "# "+originalLine+" # Skipped Empty Key")

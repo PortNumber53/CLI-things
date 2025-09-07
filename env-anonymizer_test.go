@@ -1,29 +1,26 @@
 package main
 
 import (
-	"io/ioutil"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
+    "os"
+    "path/filepath"
+    "strings"
+    "testing"
 )
 
 // Helper function to create a temporary file with given content
 func createTempFile(t *testing.T, content string) string {
-	t.Helper()
-	tmpfile, err := ioutil.TempFile("", "testenv")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := tmpfile.Write([]byte(content)); err != nil {
-		t.Fatal(err)
-	}
-	if err := tmpfile.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	return tmpfile.Name()
+    t.Helper()
+    tmpfile, err := os.CreateTemp("", "testenv")
+    if err != nil {
+        t.Fatal(err)
+    }
+    if _, err := tmpfile.Write([]byte(content)); err != nil {
+        t.Fatal(err)
+    }
+    if err := tmpfile.Close(); err != nil {
+        t.Fatal(err)
+    }
+    return tmpfile.Name()
 }
 
 // Test processEnvFile with different scenarios
@@ -115,11 +112,7 @@ func TestProcessEnvFile(t *testing.T) {
 // Test generateExampleFile integration
 func TestGenerateExampleFile(t *testing.T) {
 	// Create a temporary directory for our test files
-	tmpDir, err := ioutil.TempDir("", "env-anonymizer-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+    tmpDir := t.TempDir()
 
 	// Paths for test files
 	baseEnvPath := filepath.Join(tmpDir, ".env")
@@ -128,27 +121,26 @@ func TestGenerateExampleFile(t *testing.T) {
 
 	// Create base .env file
 	baseEnvContent := "DB_HOST=localhost\nDB_PORT=5432\n"
-	if err := ioutil.WriteFile(baseEnvPath, []byte(baseEnvContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+    if err := os.WriteFile(baseEnvPath, []byte(baseEnvContent), 0644); err != nil {
+        t.Fatal(err)
+    }
 
 	// Create local .env file with override and new key
 	localEnvContent := "DB_HOST=production\nAPI_KEY=secret123\n"
-	if err := ioutil.WriteFile(localEnvPath, []byte(localEnvContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+    if err := os.WriteFile(localEnvPath, []byte(localEnvContent), 0644); err != nil {
+        t.Fatal(err)
+    }
 
-	// Call generateExampleFile
-	err = generateExampleFile(baseEnvPath, localEnvPath, outputPath)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+    // Call generateExampleFile
+    if err := generateExampleFile(baseEnvPath, localEnvPath, outputPath); err != nil {
+        t.Fatalf("Unexpected error: %v", err)
+    }
 
 	// Read the generated .env.example file
-	content, err := ioutil.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
+    content, err := os.ReadFile(outputPath)
+    if err != nil {
+        t.Fatalf("Failed to read output file: %v", err)
+    }
 
 	outputStr := string(content)
 
@@ -169,11 +161,7 @@ func TestGenerateExampleFile(t *testing.T) {
 // Test error handling scenarios
 func TestErrorHandling(t *testing.T) {
 	// Test non-existent base env file
-	tmpDir, err := ioutil.TempDir("", "env-anonymizer-error-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+    tmpDir := t.TempDir()
 
 	baseEnvPath := filepath.Join(tmpDir, ".env")
 	localEnvPath := filepath.Join(tmpDir, ".env.local")
@@ -181,15 +169,14 @@ func TestErrorHandling(t *testing.T) {
 
 	// No base .env file, but local .env file exists
 	localEnvContent := "API_KEY=secret123\n"
-	if err := ioutil.WriteFile(localEnvPath, []byte(localEnvContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+    if err := os.WriteFile(localEnvPath, []byte(localEnvContent), 0644); err != nil {
+        t.Fatal(err)
+    }
 
-	// This should work without throwing an error
-	err = generateExampleFile(baseEnvPath, localEnvPath, outputPath)
-	if err != nil {
-		t.Fatalf("Unexpected error when base .env is missing: %v", err)
-	}
+    // This should work without throwing an error
+    if err := generateExampleFile(baseEnvPath, localEnvPath, outputPath); err != nil {
+        t.Fatalf("Unexpected error when base .env is missing: %v", err)
+    }
 
 	// Verify output file was created
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
