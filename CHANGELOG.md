@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-07
+
+### Added
+
+- Support for `DATABASE_URL` DSN in `dbtool.go`. If set to `postgres://` or `postgresql://`, it takes precedence over discrete `DB_*` fields.
+- Environment variable fallback for configuration keys, including `DATABASE_URL`.
+- `pg_dump` and `psql` runners now use DSN when available and minimally set environment variables.
+- New command: `table list <dbname> [--schema=<schema>]` to list tables from `information_schema.tables`. Excludes system schemas by default.
+
+### Notes
+
+- Xata: If `DATABASE_URL` is set to a HTTPS Xata workspace URL (e.g., `https://<workspace>.xata.sh/db/<db>`), the tool surfaces a helpful error. Use Xata's PostgreSQL-compatible DSN instead (e.g., `postgres://...`).
+
 ## 2025-08-29
 
 ### Added

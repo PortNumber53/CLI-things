@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,15 +27,115 @@ type DBConfig struct {
 	Password       string
 	SSLMode        string
 	MigrationsDir  string
+	// URL is an optional full DSN (e.g. postgres://user:pass@host:5432/db?sslmode=require)
+	// If provided, it takes precedence over the discrete fields above.
+	URL string
+}
+
+// defaultDBName returns the database name from config: prefers DB_NAME,
+// otherwise derives it from a PostgreSQL DSN in DATABASE_URL.
+func defaultDBName() (string, error) {
+    cfg, err := loadDBConfig()
+    if err != nil {
+        return "", err
+    }
+    if name := strings.TrimSpace(cfg.Name); name != "" {
+        return name, nil
+    }
+    u := strings.TrimSpace(cfg.URL)
+    lower := strings.ToLower(u)
+    if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
+        pu, err := url.Parse(u)
+        if err != nil {
+            return "", err
+        }
+        // Path is like /dbname or /dbname:branch; trim leading '/'
+        p := strings.TrimPrefix(pu.Path, "/")
+        if p != "" {
+            return p, nil
+        }
+    }
+    return "", fmt.Errorf("no default database name found; set DB_NAME or DATABASE_URL in config")
+}
+
+// listTables lists tables from information_schema for a given database.
+// If schema is empty, it lists all non-system schemas (excludes pg_catalog and information_schema).
+func listTables(dbname, schema string) error {
+    db, err := ConnectDBAs(dbname)
+    if err != nil {
+        return err
+    }
+    defer db.Close()
+
+    var rows *sql.Rows
+    if strings.TrimSpace(schema) == "" {
+        q := `
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_type = 'BASE TABLE'
+  AND table_schema NOT IN ('pg_catalog','information_schema')
+ORDER BY table_schema, table_name;`
+        rows, err = db.Query(q)
+    } else {
+        q := `
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_type = 'BASE TABLE'
+  AND table_schema = $1
+ORDER BY table_schema, table_name;`
+        rows, err = db.Query(q, schema)
+    }
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var s, t string
+        if err := rows.Scan(&s, &t); err != nil {
+            return err
+        }
+        fmt.Printf("%s.%s\n", s, t)
+    }
+    return rows.Err()
 }
 
 func isHelpToken(s string) bool {
-    switch strings.ToLower(s) {
-    case "-h", "--help", "help", "h":
-        return true
-    default:
-        return false
-    }
+	switch strings.ToLower(s) {
+	case "-h", "--help", "help", "h":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, val := range vals {
+		if val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func isXataHTTPSURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && strings.Contains(u.Host, "xata.sh")
+}
+
+func overrideDBNameInPostgresURL(original, newDBName string) (string, bool) {
+	u, err := url.Parse(original)
+	if err != nil {
+		return "", false
+	}
+	if u.Path == "" {
+		return "", false
+	}
+	u.Path = "/" + newDBName
+	return u.String(), true
 }
 
 // getCurrentFolderName returns the name of the current working directory
@@ -112,20 +213,21 @@ func loadDBConfig() (*DBConfig, error) {
 	}
 
 	dbConfig := &DBConfig{
-		Host:          config["DB_HOST"],
-		Port:          config["DB_PORT"],
-		Name:          config["DB_NAME"],
-		User:          config["DB_USER"],
-		Password:      config["DB_PASSWORD"],
-		SSLMode:       config["DB_SSLMODE"],
-		MigrationsDir: config["DB_MIGRATIONS_DIR"],
+		Host:          firstNonEmpty(config["DB_HOST"], os.Getenv("DB_HOST")),
+		Port:          firstNonEmpty(config["DB_PORT"], os.Getenv("DB_PORT")),
+		Name:          firstNonEmpty(config["DB_NAME"], os.Getenv("DB_NAME")),
+		User:          firstNonEmpty(config["DB_USER"], os.Getenv("DB_USER")),
+		Password:      firstNonEmpty(config["DB_PASSWORD"], os.Getenv("DB_PASSWORD")),
+		SSLMode:       firstNonEmpty(config["DB_SSLMODE"], os.Getenv("DB_SSLMODE")),
+		MigrationsDir: firstNonEmpty(config["DB_MIGRATIONS_DIR"], os.Getenv("DB_MIGRATIONS_DIR")),
+		URL:           firstNonEmpty(config["DATABASE_URL"], os.Getenv("DATABASE_URL")),
 	}
 
-    // Set defaults
-    if dbConfig.SSLMode == "" {
-        // lib/pq expects values like: disable, require, verify-ca, verify-full
-        dbConfig.SSLMode = "disable"
-    }
+	// Set defaults
+	if dbConfig.SSLMode == "" {
+		// lib/pq expects values like: disable, require, verify-ca, verify-full
+		dbConfig.SSLMode = "disable"
+	}
 	if dbConfig.Port == "" {
 		dbConfig.Port = "5432"
 	}
@@ -135,12 +237,37 @@ func loadDBConfig() (*DBConfig, error) {
 
 // createConnectionString creates a PostgreSQL connection string
 func (c *DBConfig) createConnectionString() string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.URL)), "postgres://") ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.URL)), "postgresql://") {
+		return strings.TrimSpace(c.URL)
+	}
+	// If a Xata HTTPS URL is provided, we cannot use lib/pq directly.
+	if isXataHTTPSURL(c.URL) {
+		// Provide a helpful message by panicking here to be caught by callers.
+		// Callers of this function should surface the error.
+		// We still return a formatted string for completeness, though it should not be used.
+		return ""
+	}
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, c.Name, c.SSLMode)
 }
 
 // createConnectionStringFor overrides db name
 func (c *DBConfig) createConnectionStringFor(dbname string) string {
+	// If we have a URL DSN, try to override the path component (db name)
+	if u := strings.TrimSpace(c.URL); u != "" {
+		lower := strings.ToLower(u)
+		if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
+			if newURL, ok := overrideDBNameInPostgresURL(u, dbname); ok {
+				return newURL
+			}
+			// Fall back to the provided DSN as-is if we cannot rewrite it
+			return u
+		}
+		if isXataHTTPSURL(u) {
+			return ""
+		}
+	}
 	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, dbname, c.SSLMode)
 }
@@ -150,6 +277,11 @@ func ConnectDB() (*sql.DB, error) {
 	config, err := loadDBConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load database config: %w", err)
+	}
+
+	// Handle Xata HTTPS URL specially with a helpful error
+	if isXataHTTPSURL(config.URL) {
+		return nil, fmt.Errorf("detected Xata HTTPS DATABASE_URL, which is not PostgreSQL DSN. Please use Xata's PostgreSQL connection URL (postgres://...) or set DATABASE_URL to that value. For details, see Xata docs on Postgres compatibility.")
 	}
 
 	connStr := config.createConnectionString()
@@ -164,13 +296,12 @@ func ConnectDB() (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-
 	return db, nil
 }
 
 // GetDBConfig returns the database configuration
 func GetDBConfig() (*DBConfig, error) {
-	return loadDBConfig()
+    return loadDBConfig()
 }
 
 // ConnectDBAs connects to a specific database overriding the name
@@ -178,6 +309,9 @@ func ConnectDBAs(dbname string) (*sql.DB, error) {
 	config, err := loadDBConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load database config: %w", err)
+	}
+	if isXataHTTPSURL(config.URL) {
+		return nil, fmt.Errorf("detected Xata HTTPS DATABASE_URL, which is not PostgreSQL DSN. Please use Xata's PostgreSQL connection URL (postgres://...) or set DATABASE_URL to that value. For details, see Xata docs on Postgres compatibility.")
 	}
 	connStr := config.createConnectionStringFor(dbname)
 	db, err := sql.Open("postgres", connStr)
@@ -222,15 +356,29 @@ func runPgDump(dbname, filepath string, structureOnly bool) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-f", filepath}
+	// If we have a DSN URL, prefer using it directly with -d
+	var args []string
+	if u := strings.TrimSpace(cfg.URL); strings.HasPrefix(strings.ToLower(u), "postgres://") || strings.HasPrefix(strings.ToLower(u), "postgresql://") {
+		// Override db name in the URL, if possible
+		dsn := u
+		if newURL, ok := overrideDBNameInPostgresURL(u, dbname); ok {
+			dsn = newURL
+		}
+		args = []string{"-d", dsn, "-f", filepath}
+	} else {
+		args = []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-f", filepath}
+	}
 	if structureOnly {
 		args = append(args, "--schema-only")
 	}
 	cmd := exec.Command("pg_dump", args...)
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
-	if cfg.SSLMode != "" {
-		env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
+	// Only set PGPASSWORD when not using a DSN URL with embedded credentials
+	if cfg.URL == "" {
+		env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
+		if cfg.SSLMode != "" {
+			env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
+		}
 	}
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
@@ -244,12 +392,24 @@ func runPSQLFile(dbname, filepath string) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-f", filepath}
+	// If we have a DSN URL, prefer using it directly with -d
+	var args []string
+	if u := strings.TrimSpace(cfg.URL); strings.HasPrefix(strings.ToLower(u), "postgres://") || strings.HasPrefix(strings.ToLower(u), "postgresql://") {
+		dsn := u
+		if newURL, ok := overrideDBNameInPostgresURL(u, dbname); ok {
+			dsn = newURL
+		}
+		args = []string{"-d", dsn, "-f", filepath}
+	} else {
+		args = []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-f", filepath}
+	}
 	cmd := exec.Command("psql", args...)
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
-	if cfg.SSLMode != "" {
-		env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
+	if cfg.URL == "" {
+		env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
+		if cfg.SSLMode != "" {
+			env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
+		}
 	}
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
@@ -355,6 +515,7 @@ func usage() {
     fmt.Fprintf(os.Stderr, "  database|db dump|export <dbname> <filepath> [--structure-only]\n")
     fmt.Fprintf(os.Stderr, "  database|db import|load <dbname> <filepath> [--overwrite]\n")
     fmt.Fprintf(os.Stderr, "  database|db reset|wipe <dbname> [--noconfirm]\n")
+    fmt.Fprintf(os.Stderr, "  table|tables list|ls [<dbname>] [--schema=<schema>]\n")
     fmt.Fprintf(os.Stderr, "  query|q <dbname> --query=\"<sql>\" [--json]\n")
     fmt.Fprintf(os.Stderr, "  help [command] [subcommand]\n")
 }
@@ -366,6 +527,8 @@ func helpSummary() {
     fmt.Println("    dump (export) <dbname> <filepath> [--structure-only]")
     fmt.Println("    import (load) <dbname> <filepath> [--overwrite]")
     fmt.Println("    reset (wipe) <dbname> [--noconfirm]")
+    fmt.Println("  table (tables)")
+    fmt.Println("    list (ls) [<dbname>] [--schema=<schema>]")
     fmt.Println("  query (q) <dbname> --query=\"<sql>\" [--json]")
     fmt.Println("  help [command] [subcommand]")
 }
@@ -374,6 +537,20 @@ func helpFor(mainCmd, sub string) {
     mc := normalizeMain(mainCmd)
     if mc == "query" {
         fmt.Println("Usage: query|q <dbname> --query=\"<sql>\" [--json]")
+        return
+    }
+    if mc == "table" {
+        if sub == "" {
+            fmt.Println("Usage: table|tables list|ls [<dbname>] [--schema=<schema>]")
+            return
+        }
+        sc := normalizeSub(sub)
+        switch sc {
+        case "list":
+            fmt.Println("Usage: table|tables list|ls [<dbname>] [--schema=<schema>]")
+        default:
+            usage()
+        }
         return
     }
     if mc == "database" {
@@ -403,6 +580,8 @@ func normalizeMain(s string) string {
     switch strings.ToLower(s) {
     case "database", "db":
         return "database"
+    case "table", "tables":
+        return "table"
     case "query", "q":
         return "query"
     case "help", "h", "--help", "-h":
@@ -552,6 +731,52 @@ func main() {
             if err := resetDatabase(dbname); err != nil {
                 fmt.Fprintf(os.Stderr, "reset failed: %v\n", err)
                 os.Exit(1)
+            }
+        default:
+            usage()
+            os.Exit(2)
+        }
+    case "table":
+        if len(os.Args) < 3 {
+            helpFor("table", "")
+            return
+        }
+        if isHelpToken(os.Args[2]) {
+            helpFor("table", "")
+            return
+        }
+        sub := normalizeSub(os.Args[2])
+        switch sub {
+        case "list":
+            tblFlags := flag.NewFlagSet("table list", flag.ExitOnError)
+            schema := tblFlags.String("schema", "", "Schema to filter by (default: all non-system schemas)")
+            tblFlags.Usage = func() { fmt.Println("Usage: table|tables list|ls [<dbname>] [--schema=<schema>]") }
+            // Determine if a dbname positional is provided. If the next arg starts with '-' or is absent,
+            // use the default DB name from config. Otherwise, treat it as dbname.
+            var dbname string
+            // There may be no positional dbname: args after 'list' start at index 3
+            if len(os.Args) >= 4 && !strings.HasPrefix(os.Args[3], "-") {
+                dbname = os.Args[3]
+                if err := tblFlags.Parse(os.Args[4:]); err != nil {
+                    fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+                    os.Exit(2)
+                }
+            } else {
+                // No dbname provided; parse flags from current position and then compute default
+                if err := tblFlags.Parse(os.Args[3:]); err != nil {
+                    fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+                    os.Exit(2)
+                }
+                var err error
+                dbname, err = defaultDBName()
+                if err != nil {
+                    fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+                    os.Exit(2)
+                }
+            }
+            if err := listTables(dbname, *schema); err != nil {
+                fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+                os.Exit(2)
             }
         default:
             usage()
