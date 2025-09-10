@@ -7,10 +7,78 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	db "cli-things/utility/dbtool"
 )
+
+func loadEnvFromNearestDotEnv() error {
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	for {
+		envPath := filepath.Join(currentDir, ".env")
+		if info, err := os.Stat(envPath); err == nil && !info.IsDir() {
+			if err := applyEnvFile(envPath); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		gitPath := filepath.Join(currentDir, ".git")
+		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
+			return nil
+		}
+
+		parent := filepath.Dir(currentDir)
+		if parent == currentDir {
+			return nil
+		}
+		currentDir = parent
+	}
+}
+
+func applyEnvFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		sepIndex := strings.Index(line, "=")
+		if sepIndex <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:sepIndex])
+		value := strings.TrimSpace(line[sepIndex+1:])
+		if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		} else if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+		if key == "DBTOOL_CONFIG_FILE" && value != "" && !filepath.IsAbs(value) {
+			value = filepath.Join(filepath.Dir(path), value)
+		}
+		os.Setenv(key, value)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	return nil
+}
 
 func isHelpToken(s string) bool {
 	switch strings.ToLower(s) {
@@ -119,6 +187,10 @@ func normalizeSub(s string) string {
 }
 
 func main() {
+	if err := loadEnvFromNearestDotEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load .env file: %v\n", err)
+		os.Exit(1)
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
