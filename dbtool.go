@@ -192,8 +192,9 @@ func main() {
 		os.Exit(1)
 	}
 	if len(os.Args) < 2 {
+		fmt.Println("No command provided. Run 'dbtool help' to see available commands.")
 		usage()
-		os.Exit(2)
+		return
 	}
 	// global help handling
 	if normalizeMain(os.Args[1]) == "help" {
