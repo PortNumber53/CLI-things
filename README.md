@@ -8,29 +8,35 @@ tap tap, is this thing working?
 A CLI utility for generating `.env.example` files while preserving comments and file structure.
 
 ### Features
+
 - Reads from `.env` and optional `.env.local` files
 - Anonymizes sensitive environment variable values
 - Preserves comments and blank lines from the original files
 - Supports custom input and output file paths
 
 ### Usage
+
 ```bash
 go run env-anonymizer.go [flags]
 ```
 
 #### Flags
+
 - `-env`: Path to the main .env file (default: `.env`)
 - `-local`: Path to the local .env override file (default: `.env.local`)
 - `-output`: Path for the generated .env.example file (default: `.env.example`)
 
 ### Example
+
 Given a `.env` file:
+
 ```
 DATABASE_URL=postgresql://user:password@localhost/mydb
 API_KEY=secret123
 ```
 
 The generated `.env.example` will look like:
+
 ```
 DATABASE_URL=<DATABASE_URL_VALUE>
 API_KEY=<API_KEY_VALUE>
@@ -56,7 +62,9 @@ go build -tags dbtool -o dbtool dbtool.go
 
 ### Configuration
 
-dbtool reads connection settings from `~/.config/<current-folder-name>/config.ini` under the `[default]` section.
+When `dbtool` starts it collects every `.env` file from the current directory upward until it reaches a directory containing a `.git` folder (the assumed repository root). Files that are closer to the root are applied first and files nearer your working directory are applied last, so local overrides win. Any environment variables defined across these files (for example `DBTOOL_CONFIG_FILE`) are available to the tool.
+
+- **`DBTOOL_CONFIG_FILE`**: Optional path to the configuration file. Relative paths are resolved relative to the `.env` file that defined the variable. If none of the discovered `.env` files define it, the tool falls back to loading configuration from `~/.config/<current-folder-name>/config.ini` under the `[default]` section.
 
 Example `config.ini`:
 
@@ -72,6 +80,7 @@ DB_MIGRATIONS_DIR=/path/to/migrations
 ```
 
 Notes:
+
 - `DB_PORT` defaults to `5432` if not set.
 - `DB_SSLMODE` defaults to `disable` if not set (valid values: `disable`, `require`, `verify-ca`, `verify-full`).
 
@@ -108,3 +117,4 @@ go run -tags dbtool dbtool.go db wipe mydb --noconfirm
 
 # Run a query and output JSON
 go run -tags dbtool dbtool.go q mydb --query="SELECT 1 AS one" --json
+```

@@ -19,26 +19,31 @@ func loadEnvFromNearestDotEnv() error {
 		return err
 	}
 
+	var envPaths []string
 	for {
 		envPath := filepath.Join(currentDir, ".env")
 		if info, err := os.Stat(envPath); err == nil && !info.IsDir() {
-			if err := applyEnvFile(envPath); err != nil {
-				return err
-			}
-			return nil
+			envPaths = append(envPaths, envPath)
 		}
 
 		gitPath := filepath.Join(currentDir, ".git")
 		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
-			return nil
+			break
 		}
 
 		parent := filepath.Dir(currentDir)
 		if parent == currentDir {
-			return nil
+			break
 		}
 		currentDir = parent
 	}
+
+	for i := len(envPaths) - 1; i >= 0; i-- {
+		if err := applyEnvFile(envPaths[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyEnvFile(path string) error {
