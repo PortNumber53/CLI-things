@@ -1,6 +1,6 @@
-env-anonymizer
-cli-things
-dbtool
+/env-anonymizer
+/cli-things
+/dbtool
 .gocache/
 
 
