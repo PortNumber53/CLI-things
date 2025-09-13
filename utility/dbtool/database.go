@@ -15,6 +15,45 @@ import (
 	_ "github.com/lib/pq"
 )
 
+func isVerbose() bool { return strings.TrimSpace(os.Getenv("DBTOOL_VERBOSE")) == "1" }
+
+func vprintln(a ...any) { if isVerbose() { fmt.Fprintln(os.Stderr, a...) } }
+
+func vprintf(format string, a ...any) { if isVerbose() { fmt.Fprintf(os.Stderr, format, a...) } }
+
+// printConnectionInfo logs which host/port/user/db will be used.
+// If a URL DSN is present, it parses it to extract values. If dbOverride is
+// non-empty, that value is used as the database name for display purposes.
+func printConnectionInfo(cfg *DBConfig, dbOverride string) {
+	// Prefer DSN if present
+	if u := strings.TrimSpace(cfg.URL); strings.HasPrefix(strings.ToLower(u), "postgres://") || strings.HasPrefix(strings.ToLower(u), "postgresql://") {
+		if parsed, err := url.Parse(u); err == nil {
+			host := parsed.Hostname()
+			port := parsed.Port()
+			user := ""
+			if parsed.User != nil {
+				user = parsed.User.Username()
+			}
+			dbname := strings.TrimPrefix(parsed.Path, "/")
+			if strings.TrimSpace(dbOverride) != "" {
+				dbname = dbOverride
+			}
+			vprintf("dbtool: connecting with DSN host=%s port=%s db=%s user=%s\n", host, port, dbname, user)
+			return
+		}
+		// If parse fails, fall back to discrete fields below
+	}
+	// Discrete fields
+	host := cfg.Host
+	port := cfg.Port
+	user := cfg.User
+	dbname := cfg.Name
+	if strings.TrimSpace(dbOverride) != "" {
+		dbname = dbOverride
+	}
+	vprintf("dbtool: connecting host=%s port=%s db=%s user=%s\n", host, port, dbname, user)
+}
+
 // DBConfig holds database configuration
 type DBConfig struct {
 	Host          string
@@ -79,6 +118,7 @@ func readConfigFile(configPath string) (map[string]string, error) {
 
 	config := make(map[string]string)
 	var currentSection string
+	hasAnySection := false
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -92,16 +132,23 @@ func readConfigFile(configPath string) (map[string]string, error) {
 		// Section header
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			currentSection = strings.Trim(line, "[]")
+			hasAnySection = true
 			continue
 		}
 
 		// Key-value pair
-		if strings.Contains(line, "=") && currentSection == "default" {
+		if strings.Contains(line, "=") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
 				key := strings.TrimSpace(parts[0])
 				value := strings.TrimSpace(parts[1])
-				config[key] = value
+				// Accept keys if:
+				// - inside [default] section, or
+				// - there are no sections at all (treat as default), or
+				// - currentSection is empty (top-level before any section)
+				if currentSection == "default" || !hasAnySection || currentSection == "" {
+					config[key] = value
+				}
 			}
 		}
 	}
@@ -130,8 +177,12 @@ func loadDBConfig() (*DBConfig, error) {
 		}
 
 		configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
+		vprintln("dbtool: using default config.ini:", configPath)
+	} else {
+		vprintln("dbtool: using DBTOOL_CONFIG_FILE:", configPath)
 	}
 
+	vprintln("dbtool: reading config.ini:", configPath)
 	config, err := readConfigFile(configPath)
 	if err != nil {
 		return nil, err
@@ -146,6 +197,27 @@ func loadDBConfig() (*DBConfig, error) {
 		SSLMode:       firstNonEmpty(config["DB_SSLMODE"], os.Getenv("DB_SSLMODE")),
 		MigrationsDir: firstNonEmpty(config["DB_MIGRATIONS_DIR"], os.Getenv("DB_MIGRATIONS_DIR")),
 		URL:           firstNonEmpty(config["DATABASE_URL"], os.Getenv("DATABASE_URL")),
+	}
+
+	// Verbose: show which keys were parsed (without sensitive data)
+	if isVerbose() {
+		vprintf("dbtool: parsed config keys: DB_HOST=%q DB_PORT=%q DB_NAME=%q DB_USER=%q DB_SSLMODE=%q DATABASE_URL_present=%v\n",
+			config["DB_HOST"], config["DB_PORT"], config["DB_NAME"], config["DB_USER"], config["DB_SSLMODE"], config["DATABASE_URL"] != "")
+		// Redact password in DSN
+		if u := strings.TrimSpace(dbConfig.URL); u != "" {
+			if pu, err := url.Parse(u); err == nil {
+				if pu.User != nil {
+					if _, has := pu.User.Password(); has {
+						pu.User = url.User(pu.User.Username())
+					}
+				}
+				vprintln("dbtool: effective DATABASE_URL:", pu.String())
+			} else {
+				vprintln("dbtool: effective DATABASE_URL (unparsed):", "<invalid>")
+			}
+		} else {
+			vprintln("dbtool: effective DATABASE_URL: <empty>")
+		}
 	}
 
 	// Set defaults
@@ -235,6 +307,7 @@ func ConnectDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("detected Xata HTTPS DATABASE_URL, which is not PostgreSQL DSN. Please use Xata's PostgreSQL connection URL (postgres://...) or set DATABASE_URL to that value. For details, see Xata docs on Postgres compatibility.")
 	}
 
+	printConnectionInfo(config, "")
 	connStr := config.createConnectionString()
 
 	db, err := sql.Open("postgres", connStr)
@@ -264,6 +337,7 @@ func ConnectDBAs(dbname string) (*sql.DB, error) {
 	if isXataHTTPSURL(config.URL) {
 		return nil, fmt.Errorf("detected Xata HTTPS DATABASE_URL, which is not PostgreSQL DSN. Please use Xata's PostgreSQL connection URL (postgres://...) or set DATABASE_URL to that value. For details, see Xata docs on Postgres compatibility.")
 	}
+	printConnectionInfo(config, dbname)
 	connStr := config.createConnectionStringFor(dbname)
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {

@@ -13,6 +13,24 @@ import (
 	db "cli-things/utility/dbtool"
 )
 
+var verbose bool
+
+// parseAndStripGlobalFlags scans os.Args for global flags like --verbose/-v,
+// sets globals accordingly, and returns a cleaned slice of args without those flags.
+func parseAndStripGlobalFlags(args []string) []string {
+	cleaned := make([]string, 0, len(args))
+	for _, a := range args {
+		switch a {
+		case "--verbose", "-v":
+			verbose = true
+			// do not append to cleaned
+		default:
+			cleaned = append(cleaned, a)
+		}
+	}
+	return cleaned
+}
+
 func loadEnvFromNearestDotEnv() error {
 	currentDir, err := os.Getwd()
 	if err != nil {
@@ -20,10 +38,16 @@ func loadEnvFromNearestDotEnv() error {
 	}
 
 	var envPaths []string
+	if verbose {
+		fmt.Fprintln(os.Stderr, "dbtool: searching for .env files from", currentDir)
+	}
 	for {
 		envPath := filepath.Join(currentDir, ".env")
 		if info, err := os.Stat(envPath); err == nil && !info.IsDir() {
 			envPaths = append(envPaths, envPath)
+			if verbose {
+				fmt.Fprintln(os.Stderr, "dbtool: found .env:", envPath)
+			}
 		}
 
 		gitPath := filepath.Join(currentDir, ".git")
@@ -39,6 +63,9 @@ func loadEnvFromNearestDotEnv() error {
 	}
 
 	for i := len(envPaths) - 1; i >= 0; i-- {
+		if verbose {
+			fmt.Fprintln(os.Stderr, "dbtool: applying .env:", envPaths[i])
+		}
 		if err := applyEnvFile(envPaths[i]); err != nil {
 			return err
 		}
@@ -74,7 +101,11 @@ func applyEnvFile(path string) error {
 			value = value[1 : len(value)-1]
 		}
 		if key == "DBTOOL_CONFIG_FILE" && value != "" && !filepath.IsAbs(value) {
-			value = filepath.Join(filepath.Dir(path), value)
+			resolved := filepath.Join(filepath.Dir(path), value)
+			if verbose {
+				fmt.Fprintf(os.Stderr, "dbtool: resolving DBTOOL_CONFIG_FILE relative to %s -> %s\n", path, resolved)
+			}
+			value = resolved
 		}
 		os.Setenv(key, value)
 	}
@@ -103,6 +134,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  table|tables list|ls [<dbname>] [--schema=<schema>]\n")
 	fmt.Fprintf(os.Stderr, "  query|q <dbname> --query=\"<sql>\" [--json]\n")
 	fmt.Fprintf(os.Stderr, "  help [command] [subcommand]\n")
+	fmt.Fprintf(os.Stderr, "\nGlobal flags:\n")
+	fmt.Fprintf(os.Stderr, "  -v, --verbose   Show diagnostics about .env and config.ini resolution\n")
 }
 
 func helpSummary() {
@@ -192,9 +225,22 @@ func normalizeSub(s string) string {
 }
 
 func main() {
+	// Handle global flags first and strip them from os.Args so subcommands don't see them
+	os.Args = parseAndStripGlobalFlags(os.Args)
+	if verbose {
+		// Export to the dbtool package via env var
+		os.Setenv("DBTOOL_VERBOSE", "1")
+	}
 	if err := loadEnvFromNearestDotEnv(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load .env file: %v\n", err)
 		os.Exit(1)
+	}
+	if verbose {
+		if v := strings.TrimSpace(os.Getenv("DBTOOL_CONFIG_FILE")); v != "" {
+			fmt.Fprintln(os.Stderr, "dbtool: DBTOOL_CONFIG_FILE after .env:", v)
+		} else {
+			fmt.Fprintln(os.Stderr, "dbtool: DBTOOL_CONFIG_FILE not set; will use default search path in dbtool package")
+		}
 	}
 	if len(os.Args) < 2 {
 		fmt.Println("No command provided. Run 'dbtool help' to see available commands.")

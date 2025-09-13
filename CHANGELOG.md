@@ -1,3 +1,22 @@
+## 2025-09-12
+
+### Added
+
+- Global verbose flag for `dbtool` (`-v` / `--verbose`). When enabled:
+  - Prints which `.env` files were discovered and applied, in order, in `dbtool.go`.
+  - Shows how `DBTOOL_CONFIG_FILE` is resolved when relative to a `.env` file.
+  - Logs which `config.ini` path is used and when it is read inside `utility/dbtool/database.go`.
+  - `usage()` now includes a "Global flags" section describing verbose mode.
+
+### Fixed
+
+- `config.ini` parser now also accepts top-level `key=value` entries (outside of any section), treating them as `[default]` values. This matches common minimal INI styles.
+- Verbose mode now reads `DBTOOL_VERBOSE` dynamically at call time to ensure `-v/--verbose` set by the CLI is honored during library calls.
+
+### Changed
+
+- Verbose connection diagnostics now print which host, port, database, and username are used when connecting (DSN or discrete fields), without exposing passwords.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
