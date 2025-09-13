@@ -1,3 +1,13 @@
+## 2025-09-13
+
+### Fixed
+
+- `dbtool query` could fail on some providers with a driver-level protocol error like "unexpected ReadyForQuery" when executing non-row statements (e.g., `CREATE EXTENSION`). The tool now falls back to invoking `psql -c` for such statements when this specific error is encountered.
+
+### Added
+
+- New helper `RunPSQLInline()` in `utility/dbtool/database.go` to execute a single SQL statement via `psql -c`, used as a safe fallback path.
+
 ## 2025-09-12
 
 ### Added

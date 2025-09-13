@@ -17,6 +17,37 @@ import (
 
 func isVerbose() bool { return strings.TrimSpace(os.Getenv("DBTOOL_VERBOSE")) == "1" }
 
+// RunPSQLInline executes a single SQL statement against a database using psql -c
+func RunPSQLInline(dbname, sqlText string) error {
+    cfg, err := GetDBConfig()
+    if err != nil {
+        return err
+    }
+    // If we have a DSN URL, prefer using it directly with -d
+    var args []string
+    if u := strings.TrimSpace(cfg.URL); strings.HasPrefix(strings.ToLower(u), "postgres://") || strings.HasPrefix(strings.ToLower(u), "postgresql://") {
+        dsn := u
+        if newURL, ok := overrideDBNameInPostgresURL(u, dbname); ok {
+            dsn = newURL
+        }
+        args = []string{"-d", dsn, "-c", sqlText}
+    } else {
+        args = []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-c", sqlText}
+    }
+    cmd := exec.Command("psql", args...)
+    env := os.Environ()
+    if cfg.URL == "" {
+        env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
+        if cfg.SSLMode != "" {
+            env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
+        }
+    }
+    cmd.Env = env
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    return cmd.Run()
+}
+
 func vprintln(a ...any) { if isVerbose() { fmt.Fprintln(os.Stderr, a...) } }
 
 func vprintf(format string, a ...any) { if isVerbose() { fmt.Fprintf(os.Stderr, format, a...) } }
@@ -525,13 +556,62 @@ func QueryDatabase(dbname, query string, asJSON bool) error {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(query)
-	if err != nil {
-		// Try Exec for non-SELECT
-		if _, exErr := db.Exec(query); exErr == nil {
+	// Decide whether this statement should return rows
+	qLower := strings.ToLower(strings.TrimSpace(query))
+	// Strip trailing semicolon for classification
+	qLower = strings.TrimSuffix(qLower, ";")
+	// Basic detection: queries that typically return rows
+	returnsRows := false
+	if strings.HasPrefix(qLower, "select ") || strings.HasPrefix(qLower, "with ") || strings.HasPrefix(qLower, "values ") || strings.HasPrefix(qLower, "table ") {
+		returnsRows = true
+	}
+	// Handle statements that include RETURNING
+	if !returnsRows && strings.Contains(qLower, " returning ") {
+		returnsRows = true
+	}
+
+	if !returnsRows {
+		// Execute statements that do not return rows using Exec to avoid driver issues
+		if res, exErr := db.Exec(query); exErr == nil {
+			if asJSON {
+				// Provide a small JSON result for acknowledgement
+				type okResp struct {
+					OK           bool   `json:"ok"`
+					RowsAffected int64  `json:"rowsAffected"`
+					Message      string `json:"message"`
+				}
+				var ra int64
+				if res != nil {
+					if n, err := res.RowsAffected(); err == nil {
+						ra = n
+					}
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(okResp{OK: true, RowsAffected: ra, Message: "OK"})
+			}
+			// Text acknowledgement
+			if res != nil {
+				if n, err := res.RowsAffected(); err == nil {
+					fmt.Printf("OK (%d rows affected)\n", n)
+					return nil
+				}
+			}
 			fmt.Println("OK")
 			return nil
+		} else {
+			// Some providers/drivers can surface a protocol desync like "unexpected ReadyForQuery"
+			// for DDL statements via the driver. Fall back to psql -c in that case.
+			if strings.Contains(strings.ToLower(exErr.Error()), "unexpected readyforquery") {
+				vprintln("dbtool: Exec() returned unexpected ReadyForQuery; falling back to psql -c")
+				return RunPSQLInline(dbname, query)
+			}
+			return exErr
 		}
+	}
+
+	rows, err := db.Query(query)
+	if err != nil {
 		return err
 	}
 	defer rows.Close()
