@@ -1,0 +1,21 @@
+# Environment for CLI-things publicip systemd service
+# Copy to /etc/cli-things/publicip.conf and edit values
+
+# Cloudflare API token with Zone:Read and DNS:Edit for your zone
+CLOUDFLARE_API_KEY=
+
+# Database connection (set either DATABASE_URL or discrete DB_* values)
+# Example PostgreSQL DSN (preferred):
+# DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
+DATABASE_URL=
+
+# Optional discrete settings if not using DATABASE_URL
+# DB_HOST=
+# DB_PORT=5432
+# DB_NAME=
+# DB_USER=
+# DB_PASSWORD=
+# DB_SSLMODE=disable
+
+# Optional: explicitly point to a config.ini instead of ~/.config/<cwd>/config.ini
+# DBTOOL_CONFIG_FILE=/etc/cli-things/config.ini

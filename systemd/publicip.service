@@ -9,6 +9,7 @@ Type=oneshot
 WorkingDirectory=/opt/cli-things
 # Ensure PATH has Go and system tools
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/cli-things/publicip.conf
 # Optional: increase default start timeout for slower networks
 TimeoutStartSec=120
 # Run the tool: store current IP and sync Cloudflare
