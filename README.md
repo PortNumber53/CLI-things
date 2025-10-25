@@ -1,5 +1,8 @@
 # CLI-things
 
+[![Build Status](https://jenkins.portnumber53.com/buildStatus/icon?job=deploy-CLI-things%2Fmaster)](https://jenkins.portnumber53.com/job/deploy-CLI-things/job/master/)
+
+
 tap tap, is this thing working?
 [![Go Tests](https://github.com/PortNumber53/CLI-things/actions/workflows/go-tests.yml/badge.svg)](https://github.com/PortNumber53/CLI-things/actions/workflows/go-tests.yml)
 
