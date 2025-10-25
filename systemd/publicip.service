@@ -13,7 +13,7 @@ EnvironmentFile=/etc/cli-things/publicip.conf
 # Optional: increase default start timeout for slower networks
 TimeoutStartSec=120
 # Run the tool: store current IP and sync Cloudflare
-ExecStart=/usr/bin/env bash -lc './bin/publicip --store --sync-cf --cf-timeout 40s'
+ExecStart=/usr/bin/env bash -lc './bin/publicip --store --sync-cf --cf-timeout 15s --db-timeout 15s'
 
 # Notes:
 # - The binary at ./bin/publicip should be built beforehand:

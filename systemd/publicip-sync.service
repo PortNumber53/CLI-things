@@ -9,7 +9,7 @@ WorkingDirectory=/opt/cli-things
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/cli-things/publicip.conf
 TimeoutStartSec=120
-ExecStart=/usr/bin/env bash -lc './bin/publicip --sync-cf --cf-timeout 40s'
+ExecStart=/usr/bin/env bash -lc './bin/publicip --sync-cf --cf-timeout 15s --db-timeout 15s'
 
 [Install]
 WantedBy=multi-user.target
