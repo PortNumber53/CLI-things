@@ -49,6 +49,10 @@ All notable changes to this project will be documented in this file.
 
 - Added `systemd/publicip.service` and `systemd/publicip.timer` to schedule `publicip` to run `--store --sync-cf` every 15 minutes (with boot delay). Includes repo `WorkingDirectory` and uses the tool's own `.env`/config loading.
 
+### CI/CD
+
+- Added `Jenkinsfile` to build `utility/publicip` and deploy the binary to local server `crash` as user `grimlock` via passwordless SSH. The pipeline also attempts to reload systemd and start the `publicip.service` if available on the target.
+
 ## 2025-09-07
 
 ### Added
