@@ -53,6 +53,10 @@ All notable changes to this project will be documented in this file.
 
 - Added `Jenkinsfile` to build `utility/publicip` and deploy the binary to local server `crash` as user `grimlock` via passwordless SSH. The pipeline also attempts to reload systemd and start the `publicip.service` if available on the target.
 
+### Fixed
+
+- `Jenkinsfile`: replace unsupported Declarative option `ansiColor('xterm')` with `wrap([$class: 'AnsiColorBuildWrapper', colorMapName: 'xterm'])` for compatibility.
+
 ## 2025-09-07
 
 ### Added
