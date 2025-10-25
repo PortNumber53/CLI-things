@@ -181,29 +181,40 @@ func loadEnvFromNearestDotEnv() error {
 
 // load loads DB configuration, preferring DBTOOL_CONFIG_FILE, else ~/.config/<cwd>/config.ini
 func load() (*DBConfig, error) {
-	// Ensure .env variables are loaded to mirror dbtool behavior
-	_ = loadEnvFromNearestDotEnv()
-	configPath := strings.TrimSpace(os.Getenv("DBTOOL_CONFIG_FILE"))
-	if configPath == "" {
-		folderName, err := getCurrentFolderName()
-		if err != nil {
-			return nil, err
-		}
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user home directory: %w", err)
-		}
-		configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
-		vprintln("dbconf: using default config.ini:", configPath)
-	} else {
-		vprintln("dbconf: using DBTOOL_CONFIG_FILE:", configPath)
-	}
-
-	vprintln("dbconf: reading config.ini:", configPath)
-	config, err := readConfigFile(configPath)
-	if err != nil {
-		return nil, err
-	}
+    // Ensure .env variables are loaded to mirror dbtool behavior
+    _ = loadEnvFromNearestDotEnv()
+    configPath := strings.TrimSpace(os.Getenv("DBTOOL_CONFIG_FILE"))
+    var config map[string]string
+    if configPath == "" {
+        folderName, err := getCurrentFolderName()
+        if err != nil {
+            // Non-fatal; continue with empty config
+            vprintln("dbconf: could not determine current folder; skipping config.ini")
+        }
+        homeDir, herr := os.UserHomeDir()
+        if herr != nil {
+            // When running under systemd without HOME, skip config.ini gracefully
+            vprintln("dbconf: HOME not set; skipping config.ini and relying on environment variables only")
+            config = make(map[string]string)
+        } else {
+            configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
+            vprintln("dbconf: using default config.ini:", configPath)
+            vprintln("dbconf: reading config.ini:", configPath)
+            var rerr error
+            config, rerr = readConfigFile(configPath)
+            if rerr != nil {
+                return nil, rerr
+            }
+        }
+    } else {
+        vprintln("dbconf: using DBTOOL_CONFIG_FILE:", configPath)
+        vprintln("dbconf: reading config.ini:", configPath)
+        var rerr error
+        config, rerr = readConfigFile(configPath)
+        if rerr != nil {
+            return nil, rerr
+        }
+    }
 
 	dbConfig := &DBConfig{
 		Host:          firstNonEmpty(os.Getenv("DB_HOST"), config["DB_HOST"], config["HOST"]),
