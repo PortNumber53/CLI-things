@@ -3,6 +3,7 @@
 ### Fixed
 
 - `dbtool query` could fail on some providers with a driver-level protocol error like "unexpected ReadyForQuery" when executing non-row statements (e.g., `CREATE EXTENSION`). The tool now falls back to invoking `psql -c` for such statements when this specific error is encountered.
+- For Xata Postgres endpoints (DSNs whose host contains `xata.sh`), `db.Ping()` can fail even when subsequent queries would succeed. We now skip `Ping()` during connect for such DSNs and let operations surface errors, restoring compatibility with Xata.
 
 ### Added
 
@@ -30,6 +31,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 2025-10-24
+
+### Added
+
+- New shared module `utility/dbconf/` that mirrors `dbtool`'s `.env` loading and config resolution so other tools reuse the same DB credentials. Exposes `DefaultDBName()`, `ConnectDB()`, `ConnectDBAs()`.
+- New CLI `utility/publicip/` to fetch the current public IP with parallel provider queries and optional storage to PostgreSQL (`--store`), preserving a compact history via `first_use_at` and nullable `last_use_at`.
+- Cloudflare sync in `publicip` via `--sync-cf` (deprecated alias `--check-cf`): reads the current stored IP and updates A records for `brain.portnumber53.com`, `*.stage.portnumber53.com`, and `*.dev.portnumber53.com`. Uses `CLOUDFLARE_API_KEY` API token.
+
+### Changed
+
+- `publicip`: Cloudflare operations now use a dedicated timeout flag `--cf-timeout` (default 20s) and include simple retries with exponential backoff to reduce transient timeouts.
+- Renamed `--check-cf` to `--sync-cf` for clarity; kept `--check-cf` as a deprecated alias for backward compatibility.
 
 ## 2025-09-07
 

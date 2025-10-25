@@ -30,3 +30,6 @@ go.work.sum
 # env file
 .env
 .env.local
+
+# build outputs
+bin/

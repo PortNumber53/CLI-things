@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
+	dbconf "cli-things/utility/dbconf"
 )
 
 func isVerbose() bool { return strings.TrimSpace(os.Getenv("DBTOOL_VERBOSE")) == "1" }
@@ -114,6 +115,18 @@ func isXataHTTPSURL(s string) bool {
 		return false
 	}
 	return u.Scheme == "https" && strings.Contains(u.Host, "xata.sh")
+}
+
+func isXataPostgresURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "postgres" && scheme != "postgresql" {
+		return false
+	}
+	return strings.Contains(u.Host, "xata.sh")
 }
 
 func overrideDBNameInPostgresURL(original, newDBName string) (string, bool) {
@@ -220,20 +233,31 @@ func loadDBConfig() (*DBConfig, error) {
 	}
 
 	dbConfig := &DBConfig{
-		Host:          firstNonEmpty(config["DB_HOST"], os.Getenv("DB_HOST")),
-		Port:          firstNonEmpty(config["DB_PORT"], os.Getenv("DB_PORT")),
-		Name:          firstNonEmpty(config["DB_NAME"], os.Getenv("DB_NAME")),
-		User:          firstNonEmpty(config["DB_USER"], os.Getenv("DB_USER")),
-		Password:      firstNonEmpty(config["DB_PASSWORD"], os.Getenv("DB_PASSWORD")),
-		SSLMode:       firstNonEmpty(config["DB_SSLMODE"], os.Getenv("DB_SSLMODE")),
-		MigrationsDir: firstNonEmpty(config["DB_MIGRATIONS_DIR"], os.Getenv("DB_MIGRATIONS_DIR")),
-		URL:           firstNonEmpty(config["DATABASE_URL"], os.Getenv("DATABASE_URL")),
+		Host:          firstNonEmpty(os.Getenv("DB_HOST"), config["DB_HOST"], config["HOST"]),
+		Port:          firstNonEmpty(os.Getenv("DB_PORT"), config["DB_PORT"], config["PORT"]),
+		Name:          firstNonEmpty(os.Getenv("DB_NAME"), config["DB_NAME"], config["NAME"]),
+		User:          firstNonEmpty(os.Getenv("DB_USER"), config["DB_USER"], config["USER"]),
+		Password:      firstNonEmpty(os.Getenv("DB_PASSWORD"), config["DB_PASSWORD"], config["PASSWORD"]),
+		SSLMode:       firstNonEmpty(os.Getenv("DB_SSLMODE"), config["DB_SSLMODE"], config["SSL_MODE"]),
+		MigrationsDir: firstNonEmpty(os.Getenv("DB_MIGRATIONS_DIR"), config["DB_MIGRATIONS_DIR"], config["MIGRATIONS_DIR"]),
+		URL:           firstNonEmpty(os.Getenv("DATABASE_URL"), config["DATABASE_URL"], config["DATABASE_URL"]),
+	}
+
+	// If DATABASE_URL is set, ignore individual DB_* parameters
+	if dbConfig.URL != "" {
+		// Only use URL for connection, clear individual DB_* fields to avoid conflicts
+		dbConfig.Host = ""
+		dbConfig.Port = ""
+		dbConfig.Name = ""
+		dbConfig.User = ""
+		dbConfig.Password = ""
+		dbConfig.SSLMode = ""
 	}
 
 	// Verbose: show which keys were parsed (without sensitive data)
 	if isVerbose() {
 		vprintf("dbtool: parsed config keys: DB_HOST=%q DB_PORT=%q DB_NAME=%q DB_USER=%q DB_SSLMODE=%q DATABASE_URL_present=%v\n",
-			config["DB_HOST"], config["DB_PORT"], config["DB_NAME"], config["DB_USER"], config["DB_SSLMODE"], config["DATABASE_URL"] != "")
+			dbConfig.Host, dbConfig.Port, dbConfig.Name, dbConfig.User, dbConfig.SSLMode, dbConfig.URL != "")
 		// Redact password in DSN
 		if u := strings.TrimSpace(dbConfig.URL); u != "" {
 			if pu, err := url.Parse(u); err == nil {
@@ -265,29 +289,7 @@ func loadDBConfig() (*DBConfig, error) {
 
 // DefaultDBName returns the database name from config: prefers DB_NAME,
 // otherwise derives it from a PostgreSQL DSN in DATABASE_URL.
-func DefaultDBName() (string, error) {
-	cfg, err := loadDBConfig()
-	if err != nil {
-		return "", err
-	}
-	if name := strings.TrimSpace(cfg.Name); name != "" {
-		return name, nil
-	}
-	u := strings.TrimSpace(cfg.URL)
-	lower := strings.ToLower(u)
-	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
-		pu, err := url.Parse(u)
-		if err != nil {
-			return "", err
-		}
-		// Path is like /dbname or /dbname:branch; trim leading '/'
-		p := strings.TrimPrefix(pu.Path, "/")
-		if p != "" {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("no default database name found; set DB_NAME or DATABASE_URL in config")
-}
+func DefaultDBName() (string, error) { return dbconf.DefaultDBName() }
 
 // createConnectionString creates a PostgreSQL connection string
 func (c *DBConfig) createConnectionString() string {
@@ -327,59 +329,27 @@ func (c *DBConfig) createConnectionStringFor(dbname string) string {
 }
 
 // ConnectDB establishes a connection to the PostgreSQL database
-func ConnectDB() (*sql.DB, error) {
-	config, err := loadDBConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load database config: %w", err)
-	}
-
-	// Handle Xata HTTPS URL specially with a helpful error
-	if isXataHTTPSURL(config.URL) {
-		return nil, fmt.Errorf("detected Xata HTTPS DATABASE_URL, which is not PostgreSQL DSN. Please use Xata's PostgreSQL connection URL (postgres://...) or set DATABASE_URL to that value. For details, see Xata docs on Postgres compatibility.")
-	}
-
-	printConnectionInfo(config, "")
-	connStr := config.createConnectionString()
-
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database connection: %w", err)
-	}
-
-	// Test the connection
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-	return db, nil
-}
+func ConnectDB() (*sql.DB, error) { return dbconf.ConnectDB() }
 
 // GetDBConfig returns the database configuration
 func GetDBConfig() (*DBConfig, error) {
-	return loadDBConfig()
+    // Wrap conf.GetDBConfig to preserve return type. Map fields into local DBConfig.
+    c, err := dbconf.GetDBConfig()
+    if err != nil { return nil, err }
+    return &DBConfig{
+        Host: c.Host,
+        Port: c.Port,
+        Name: c.Name,
+        User: c.User,
+        Password: c.Password,
+        SSLMode: c.SSLMode,
+        MigrationsDir: c.MigrationsDir,
+        URL: c.URL,
+    }, nil
 }
 
 // ConnectDBAs connects to a specific database overriding the name
-func ConnectDBAs(dbname string) (*sql.DB, error) {
-	config, err := loadDBConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load database config: %w", err)
-	}
-	if isXataHTTPSURL(config.URL) {
-		return nil, fmt.Errorf("detected Xata HTTPS DATABASE_URL, which is not PostgreSQL DSN. Please use Xata's PostgreSQL connection URL (postgres://...) or set DATABASE_URL to that value. For details, see Xata docs on Postgres compatibility.")
-	}
-	printConnectionInfo(config, dbname)
-	connStr := config.createConnectionStringFor(dbname)
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database connection: %w", err)
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-	return db, nil
-}
+func ConnectDBAs(dbname string) (*sql.DB, error) { return dbconf.ConnectDBAs(dbname) }
 
 // ListDatabases queries pg_database to list databases (excluding templates)
 func ListDatabases() error {
