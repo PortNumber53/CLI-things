@@ -42,16 +42,24 @@ pipeline {
           scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
           # Ensure executable bit set
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
-          # Install/Update system-wide systemd unit and timer
-          scp -p systemd/publicip.service systemd/publicip.timer ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && sudo mv /tmp/publicip.timer /etc/systemd/system/publicip.timer"
+          # Install/Update system-wide systemd unit and timers
+          scp -p systemd/publicip.service systemd/publicip.timer \
+                 systemd/publicip-collect.service systemd/publicip-collect.timer \
+                 systemd/publicip-sync.service systemd/publicip-sync.timer \
+                 ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && \
+                                             sudo mv /tmp/publicip.timer /etc/systemd/system/publicip.timer && \
+                                             sudo mv /tmp/publicip-collect.service /etc/systemd/system/publicip-collect.service && \
+                                             sudo mv /tmp/publicip-collect.timer /etc/systemd/system/publicip-collect.timer && \
+                                             sudo mv /tmp/publicip-sync.service /etc/systemd/system/publicip-sync.service && \
+                                             sudo mv /tmp/publicip-sync.timer /etc/systemd/system/publicip-sync.timer"
           # Ensure environment directory exists and seed env file if absent
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things"
           scp -p systemd/publicip.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/publicip.conf.sample
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cli-things/publicip.conf ]; then sudo mv /tmp/publicip.conf.sample /etc/cli-things/publicip.conf; else sudo rm -f /tmp/publicip.conf.sample; fi"
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload"
-          # Enable and start the timer (system-wide)
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer"
+          # Enable and start the timers (system-wide)
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer"
           # Optionally start the service immediately once
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl start publicip.service || true"
         '''

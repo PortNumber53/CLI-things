@@ -57,6 +57,29 @@ All notable changes to this project will be documented in this file.
 
 - `Jenkinsfile`: replace unsupported Declarative option `ansiColor('xterm')` with `wrap([$class: 'AnsiColorBuildWrapper', colorMapName: 'xterm'])` for compatibility.
 
+## 2025-10-25
+
+### Added
+
+- `utility/publicip`: DNS targets tracking and history
+  - New tables auto-created: `public.dns_targets(fqdn text PRIMARY KEY, enabled boolean)`, `public.dns_history(fqdn text, ip inet, first_use_at, last_use_at, PRIMARY KEY(fqdn, ip))`.
+  - Flags:
+    - `--init-dns-targets`: seeds default targets derived from `--cf-host` zone (e.g., `brain.<zone>`, `*.stage.<zone>`, `*.dev.<zone>`)
+    - `--collect-cf`: pulls current CF A records for enabled targets and writes to `dns_history`
+    - `--sync-cf`: now reads targets from DB and compares DB-recorded DNS IP vs current stored public IP; updates CF only when different
+    - `--force`: forces CF update regardless of DB state
+
+### Ops
+
+- New systemd units/timers:
+  - `publicip-collect.service/.timer` — hourly collection of Cloudflare DNS into DB
+  - `publicip-sync.service/.timer` — every-minute sync of DNS to current public IP via DB targets
+- `publicip.service` now loads environment from `/etc/cli-things/publicip.conf`.
+
+### CI/CD
+
+- `Jenkinsfile` updated to deploy new units/timers and to seed `/etc/cli-things/publicip.conf` from a sample on first install.
+
 ## 2025-09-07
 
 ### Added

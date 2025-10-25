@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly Cloudflare DNS collection (CLI-things publicip)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1h
+AccuracySec=2min
+Persistent=true
+Unit=publicip-collect.service
+
+[Install]
+WantedBy=timers.target
