@@ -42,10 +42,13 @@ pipeline {
           scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
           # Ensure executable bit set
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
-          # Optionally trigger an immediate run (timer will handle periodic runs)
-          # If systemd unit is installed on the target:
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "systemctl --user daemon-reload || true"
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload || true"
+          # Install/Update system-wide systemd unit and timer
+          scp -p systemd/publicip.service systemd/publicip.timer ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && sudo mv /tmp/publicip.timer /etc/systemd/system/publicip.timer"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload"
+          # Enable and start the timer (system-wide)
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer"
+          # Optionally start the service immediately once
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl start publicip.service || true"
         '''
       }
