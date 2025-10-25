@@ -3,7 +3,6 @@ pipeline {
 
   options {
     timestamps()
-    wrap([$class: 'AnsiColorBuildWrapper', colorMapName: 'xterm'])
   }
 
   environment {
@@ -26,29 +25,33 @@ pipeline {
 
     stage('Build') {
       steps {
-        sh 'go version || true'
-        sh 'go mod download'
-        sh 'go build -o ${BUILD_OUT} ./${BUILD_DIR}'
-        sh 'file ${BUILD_OUT} || true'
+        ansiColor('xterm') {
+          sh 'go version || true'
+          sh 'go mod download'
+          sh 'go build -o ${BUILD_OUT} ./${BUILD_DIR}'
+          sh 'file ${BUILD_OUT} || true'
+        }
       }
     }
 
     stage('Deploy') {
       steps {
-        sh '''
-          set -euo pipefail
-          # Ensure target directories exist
-          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "mkdir -p $(dirname ${DEPLOY_PATH})"
-          # Copy the binary
-          scp -o StrictHostKeyChecking=no -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
-          # Ensure executable bit set
-          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
-          # Optionally trigger an immediate run (timer will handle periodic runs)
-          # If systemd unit is installed on the target:
-          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "systemctl --user daemon-reload || true"
-          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload || true"
-          ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl start publicip.service || true"
-        '''
+        ansiColor('xterm') {
+          sh '''
+            set -euo pipefail
+            # Ensure target directories exist
+            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "mkdir -p $(dirname ${DEPLOY_PATH})"
+            # Copy the binary
+            scp -o StrictHostKeyChecking=no -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
+            # Ensure executable bit set
+            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
+            # Optionally trigger an immediate run (timer will handle periodic runs)
+            # If systemd unit is installed on the target:
+            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "systemctl --user daemon-reload || true"
+            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload || true"
+            ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl start publicip.service || true"
+          '''
+        }
       }
     }
   }
