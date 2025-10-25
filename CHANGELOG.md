@@ -76,6 +76,12 @@ All notable changes to this project will be documented in this file.
   - `publicip-sync.service/.timer` — every-minute sync of DNS to current public IP via DB targets
 - `publicip.service` now loads environment from `/etc/cli-things/publicip.conf`.
 
+### Changed
+
+- Increased Cloudflare operation resilience:
+  - Added retries with exponential backoff to zone lookup and DNS record fetch.
+  - Increased systemd `publicip.service` Cloudflare timeout to `--cf-timeout 60s`.
+
 ### CI/CD
 
 - `Jenkinsfile` updated to deploy new units/timers and to seed `/etc/cli-things/publicip.conf` from a sample on first install.

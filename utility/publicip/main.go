@@ -118,7 +118,7 @@ func cfDoWithRetry(ctx context.Context, method, url, token string, body any, out
 func cfFindZoneID(ctx context.Context, token, zoneName string) (string, error) {
 	var zr cfZoneResp
 	url := "https://api.cloudflare.com/client/v4/zones?name=" + zoneName
-	if err := cfDo(ctx, http.MethodGet, url, token, nil, &zr); err != nil {
+	if err := cfDoWithRetry(ctx, http.MethodGet, url, token, nil, &zr, 3, 500*time.Millisecond); err != nil {
 		return "", err
 	}
 	if !zr.Success || len(zr.Result) == 0 {
@@ -130,7 +130,7 @@ func cfFindZoneID(ctx context.Context, token, zoneName string) (string, error) {
 func cfGetARecord(ctx context.Context, token, zoneID, fqdn string) (*cfDNSRecord, error) {
 	var dr cfDNSResp
 	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records?type=A&name=" + fqdn
-	if err := cfDo(ctx, http.MethodGet, url, token, nil, &dr); err != nil {
+	if err := cfDoWithRetry(ctx, http.MethodGet, url, token, nil, &dr, 3, 500*time.Millisecond); err != nil {
 		return nil, err
 	}
 	if !dr.Success || len(dr.Result) == 0 {
@@ -376,6 +376,7 @@ func main() {
 		collectCF bool
 		initDNSTargets bool
 		forceSync bool
+		dbTimeout time.Duration
 	)
 	flag.BoolVar(&ipv4, "ipv4", false, "prefer IPv4 only")
 	flag.BoolVar(&ipv6, "ipv6", false, "prefer IPv6 only")
@@ -389,6 +390,7 @@ func main() {
 	flag.BoolVar(&deprecatedCheckCF, "check-cf", false, "DEPRECATED: use --sync-cf")
 	flag.StringVar(&cfHost, "cf-host", "brain.portnumber53.com", "Cloudflare hostname to check/update")
 	flag.DurationVar(&cfTimeout, "cf-timeout", 20*time.Second, "timeout for Cloudflare API operations")
+	flag.DurationVar(&dbTimeout, "db-timeout", 20*time.Second, "timeout for database operations")
 	flag.BoolVar(&collectCF, "collect-cf", false, "collect current Cloudflare DNS A records for targets and store in DB history")
 	flag.BoolVar(&initDNSTargets, "init-dns-targets", false, "seed default DNS targets into DB")
 	flag.BoolVar(&forceSync, "force", false, "force Cloudflare update even if DB history matches desired IP")
@@ -405,7 +407,9 @@ func main() {
 			}
 			dbname = d
 		}
-		if err := ensureTables(context.Background(), dbname); err != nil {
+		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancelDB()
+		if err := ensureTables(dbCtx, dbname); err != nil {
 			fmt.Fprintln(os.Stderr, "db error: ensure tables:", err)
 			os.Exit(1)
 		}
@@ -418,7 +422,9 @@ func main() {
 			os.Exit(2)
 		}
 		zoneName := cfHost[dot+1:]
-		if err := seedDefaultTargets(context.Background(), dbname, zoneName, cfHost); err != nil {
+		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancelDB()
+		if err := seedDefaultTargets(dbCtx, dbname, zoneName, cfHost); err != nil {
 			fmt.Fprintln(os.Stderr, "db error: seed targets:", err)
 			os.Exit(1)
 		}
@@ -446,19 +452,21 @@ func main() {
 	if store {
 		// Resolve DB name
 		// Connect and write
+		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancelDB()
 		db, err := dbconf.ConnectDBAs(dbname)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "store error: connect:", err)
 			os.Exit(1)
 		}
 		defer db.Close()
-		tx, err := db.BeginTx(ctx, nil)
+		tx, err := db.BeginTx(dbCtx, nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "store error: begin:", err)
 			os.Exit(1)
 		}
 		// Close previous current IP (if any) when it differs
-		if _, err := tx.ExecContext(ctx, "UPDATE public.public_ip_history SET last_use_at = now() WHERE last_use_at IS NULL AND ip <> $1::inet", ip.String()); err != nil {
+		if _, err := tx.ExecContext(dbCtx, "UPDATE public.public_ip_history SET last_use_at = now() WHERE last_use_at IS NULL AND ip <> $1::inet", ip.String()); err != nil {
 			_ = tx.Rollback()
 			fmt.Fprintln(os.Stderr, "store error: update previous:", err)
 			os.Exit(1)
@@ -469,7 +477,7 @@ VALUES ($1::inet, now(), NULL)
 ON CONFLICT (ip) DO UPDATE SET
   last_use_at = EXCLUDED.last_use_at,
   first_use_at = LEAST(public.public_ip_history.first_use_at, EXCLUDED.first_use_at)`
-		if _, err := tx.ExecContext(ctx, ins, ip.String()); err != nil {
+		if _, err := tx.ExecContext(dbCtx, ins, ip.String()); err != nil {
 			_ = tx.Rollback()
 			fmt.Fprintln(os.Stderr, "store error: upsert:", err)
 			os.Exit(1)
@@ -493,14 +501,16 @@ ON CONFLICT (ip) DO UPDATE SET
 			os.Exit(2)
 		}
 		zoneName := cfHost[dot+1:]
-		cfCtx, cancelCF := context.WithTimeout(ctx, cfTimeout)
+		cfCtx, cancelCF := context.WithTimeout(context.Background(), cfTimeout)
 		defer cancelCF()
 		zID, err := cfFindZoneID(cfCtx, token, zoneName)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "cf error: zone lookup:", err)
 			os.Exit(1)
 		}
-		targets, err := listEnabledTargets(cfCtx, dbname)
+		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancelDB()
+		targets, err := listEnabledTargets(dbCtx, dbname)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "db error: list targets:", err)
 			os.Exit(1)
@@ -512,7 +522,7 @@ ON CONFLICT (ip) DO UPDATE SET
 				os.Exit(1)
 			}
 			if rec != nil {
-				if err := setCurrentDNSIP(cfCtx, dbname, fq, strings.TrimSpace(rec.Content)); err != nil {
+				if err := setCurrentDNSIP(dbCtx, dbname, fq, strings.TrimSpace(rec.Content)); err != nil {
 					fmt.Fprintln(os.Stderr, "db error: set dns ip:", fq, err)
 					os.Exit(1)
 				}
@@ -545,7 +555,7 @@ ON CONFLICT (ip) DO UPDATE SET
 			os.Exit(2)
 		}
 		zoneName := cfHost[dot+1:]
-		cfCtx, cancelCF := context.WithTimeout(ctx, cfTimeout)
+		cfCtx, cancelCF := context.WithTimeout(context.Background(), cfTimeout)
 		defer cancelCF()
 		zID, err := cfFindZoneID(cfCtx, token, zoneName)
 		if err != nil {
@@ -553,7 +563,9 @@ ON CONFLICT (ip) DO UPDATE SET
 			os.Exit(1)
 		}
 		// Read desired targets from DB
-		targets, err := listEnabledTargets(cfCtx, dbname)
+		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancelDB()
+		targets, err := listEnabledTargets(dbCtx, dbname)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "db error: list targets:", err)
 			os.Exit(1)
@@ -566,7 +578,7 @@ ON CONFLICT (ip) DO UPDATE SET
 			needUpdate := forceSync
 			if !needUpdate {
 				// Preferred: compare DB-recorded current DNS IP for fqdn
-				if cfip, e := currentDNSIP(cfCtx, dbname, fq); e == nil {
+				if cfip, e := currentDNSIP(dbCtx, dbname, fq); e == nil {
 					needUpdate = strings.TrimSpace(cfip) != currentIP
 				} else {
 					// Fallback to live query if no DB record
@@ -593,7 +605,7 @@ ON CONFLICT (ip) DO UPDATE SET
 					os.Exit(1)
 				}
 				// Reflect the change in DB history
-				if err := setCurrentDNSIP(cfCtx, dbname, fq, currentIP); err != nil {
+				if err := setCurrentDNSIP(dbCtx, dbname, fq, currentIP); err != nil {
 					fmt.Fprintln(os.Stderr, "db error: set dns ip:", fq, err)
 					os.Exit(1)
 				}
