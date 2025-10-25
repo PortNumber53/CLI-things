@@ -45,6 +45,10 @@ All notable changes to this project will be documented in this file.
 - `publicip`: Cloudflare operations now use a dedicated timeout flag `--cf-timeout` (default 20s) and include simple retries with exponential backoff to reduce transient timeouts.
 - Renamed `--check-cf` to `--sync-cf` for clarity; kept `--check-cf` as a deprecated alias for backward compatibility.
 
+### Ops
+
+- Added `systemd/publicip.service` and `systemd/publicip.timer` to schedule `publicip` to run `--store --sync-cf` every 15 minutes (with boot delay). Includes repo `WorkingDirectory` and uses the tool's own `.env`/config loading.
+
 ## 2025-09-07
 
 ### Added

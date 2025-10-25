@@ -1,0 +1,26 @@
+[Unit]
+Description=Sync public IP to DB and Cloudflare (CLI-things publicip)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Set this to your repo path
+WorkingDirectory=/opt/cli-things
+# Ensure PATH has Go and system tools
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Optional: increase default start timeout for slower networks
+TimeoutStartSec=120
+# Run the tool: store current IP and sync Cloudflare
+ExecStart=/usr/bin/env bash -lc './bin/publicip --store --sync-cf --cf-timeout 40s'
+
+# Notes:
+# - The binary at ./bin/publicip should be built beforehand:
+#     go build -o bin/publicip ./utility/publicip
+# - The tool loads .env and DB config internally (via utility/dbconf),
+#   so no EnvironmentFile is required here.
+# - CLOUDFLARE_API_KEY can be placed in the repo .env (loaded by the tool),
+#   or provided via a systemd Environment directive here if preferred.
+
+[Install]
+WantedBy=multi-user.target
