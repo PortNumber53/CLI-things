@@ -78,7 +78,7 @@ DATABASE_URL="postgresql://user:pass@host:5432/db" dbtool db list
 DB_HOST=localhost DB_PORT=5433 dbtool table list
 ```
 
-- **`DBTOOL_CONFIG_FILE`**: Optional path to the configuration file. Relative paths are resolved relative to the `.env` file that defined the variable. If none of the discovered `.env` files define it, the tool falls back to loading configuration from `~/.config/<current-folder-name>/config.ini` under the `[default]` section.
+- **`DBTOOL_CONFIG_FILE`**: Optional path to the configuration file. Relative paths are resolved relative to the `.env` file that defined the variable. If none of the discovered `.env` files define it, the tool falls back to loading configuration from `~/.config/<current-folder-name>/config.ini` under the `[default]` section. **Note**: The default config.ini file is optional - if it doesn't exist, the tool will work with environment variables only.
 
 Example `config.ini`:
 

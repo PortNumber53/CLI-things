@@ -9,6 +9,10 @@
 - **Environment variable override priority**: Command-line environment variables now take precedence over values from `.env` files and `config.ini`. This allows direct overrides like `DATABASE_URL="..." dbtool db list` without modifying configuration files.
 - Modified `applyEnvFile()` in both `dbtool.go` and `utility/dbconf/dbconf.go` to check if an environment variable already exists before setting it from `.env` files using `os.LookupEnv()`.
 
+### Fixed
+
+- **config.ini is now optional**: The tool no longer fails when the default `~/.config/<folder>/config.ini` file doesn't exist. It gracefully falls back to using only environment variables. Note: If `DBTOOL_CONFIG_FILE` is explicitly set, that file must exist.
+
 ### Documentation
 
 - Updated README.md and .windsurf_plan.md to document the configuration priority: command-line env vars > .env files > config.ini

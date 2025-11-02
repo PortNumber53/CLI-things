@@ -196,23 +196,32 @@ func load() (*DBConfig, error) {
         if err != nil {
             // Non-fatal; continue with empty config
             vprintln("dbconf: could not determine current folder; skipping config.ini")
-        }
-        homeDir, herr := os.UserHomeDir()
-        if herr != nil {
-            // When running under systemd without HOME, skip config.ini gracefully
-            vprintln("dbconf: HOME not set; skipping config.ini and relying on environment variables only")
             config = make(map[string]string)
         } else {
-            configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
-            vprintln("dbconf: using default config.ini:", configPath)
-            vprintln("dbconf: reading config.ini:", configPath)
-            var rerr error
-            config, rerr = readConfigFile(configPath)
-            if rerr != nil {
-                return nil, rerr
+            homeDir, herr := os.UserHomeDir()
+            if herr != nil {
+                // When running under systemd without HOME, skip config.ini gracefully
+                vprintln("dbconf: HOME not set; skipping config.ini and relying on environment variables only")
+                config = make(map[string]string)
+            } else {
+                configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
+                vprintln("dbconf: using default config.ini:", configPath)
+                // Check if file exists before trying to read it
+                if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
+                    vprintln("dbconf: config.ini not found; relying on environment variables only")
+                    config = make(map[string]string)
+                } else {
+                    vprintln("dbconf: reading config.ini:", configPath)
+                    var rerr error
+                    config, rerr = readConfigFile(configPath)
+                    if rerr != nil {
+                        return nil, rerr
+                    }
+                }
             }
         }
     } else {
+        // DBTOOL_CONFIG_FILE is explicitly set, so it must exist
         vprintln("dbconf: using DBTOOL_CONFIG_FILE:", configPath)
         vprintln("dbconf: reading config.ini:", configPath)
         var rerr error
