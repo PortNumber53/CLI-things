@@ -143,7 +143,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  database|db import|load <dbname> <filepath> [--overwrite]\n")
 	fmt.Fprintf(os.Stderr, "  database|db reset|wipe <dbname> [--noconfirm]\n")
 	fmt.Fprintf(os.Stderr, "  table|tables list|ls [<dbname>] [--schema=<schema>]\n")
-	fmt.Fprintf(os.Stderr, "  query|q <dbname> --query=\"<sql>\" [--json]\n")
+	fmt.Fprintf(os.Stderr, "  query|q [<dbname>] --query=\"<sql>\" [--json]\n")
 	fmt.Fprintf(os.Stderr, "  help [command] [subcommand]\n")
 	fmt.Fprintf(os.Stderr, "\nGlobal flags:\n")
 	fmt.Fprintf(os.Stderr, "  -v, --verbose   Show diagnostics about .env and config.ini resolution\n")
@@ -159,14 +159,14 @@ func helpSummary() {
 	fmt.Println("    reset (wipe) <dbname> [--noconfirm]")
 	fmt.Println("  table (tables)")
 	fmt.Println("    list (ls) [<dbname>] [--schema=<schema>]")
-	fmt.Println("  query (q) <dbname> --query=\"<sql>\" [--json]")
+	fmt.Println("  query (q) [<dbname>] --query=\"<sql>\" [--json]")
 	fmt.Println("  help [command] [subcommand]")
 }
 
 func helpFor(mainCmd, sub string) {
 	mc := normalizeMain(mainCmd)
 	if mc == "query" {
-		fmt.Println("Usage: query|q <dbname> --query=\"<sql>\" [--json]")
+		fmt.Println("Usage: query|q [<dbname>] --query=\"<sql>\" [--json]")
 		return
 	}
 	if mc == "table" {
@@ -438,15 +438,28 @@ func main() {
 		qFlags := flag.NewFlagSet("query", flag.ExitOnError)
 		q := qFlags.String("query", "", "SQL statement to execute")
 		asJSON := qFlags.Bool("json", false, "Output as JSON")
-		qFlags.Usage = func() { fmt.Println("Usage: query|q <dbname> --query=\"<sql>\" [--json]") }
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: query <dbname> --query=\"<sql>\" [--json]")
-			os.Exit(2)
-		}
-		dbname := os.Args[2]
-		if err := qFlags.Parse(os.Args[3:]); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(2)
+		qFlags.Usage = func() { fmt.Println("Usage: query|q [<dbname>] --query=\"<sql>\" [--json]") }
+		// Determine if a dbname positional is provided. If the next arg starts with '-' or is absent,
+		// use the default DB name from config. Otherwise, treat it as dbname.
+		var dbname string
+		if len(os.Args) >= 3 && !strings.HasPrefix(os.Args[2], "-") {
+			dbname = os.Args[2]
+			if err := qFlags.Parse(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(2)
+			}
+		} else {
+			// No dbname provided; parse flags from current position and then compute default
+			if err := qFlags.Parse(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(2)
+			}
+			var err error
+			dbname, err = db.DefaultDBName()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(2)
+			}
 		}
 		if err := db.QueryDatabase(dbname, *q, *asJSON); err != nil {
 			fmt.Fprintf(os.Stderr, "query failed: %v\n", err)

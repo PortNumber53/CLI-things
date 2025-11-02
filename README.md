@@ -104,7 +104,7 @@ Notes:
 - `database dump <dbname> <filepath> [--structure-only]` (aliases: `db dump`, `db export`)
 - `database import <dbname> <filepath> [--overwrite]` (aliases: `db import`, `db load`)
 - `database reset <dbname> [--noconfirm]` (aliases: `db reset`, `db wipe`)
-- `query <dbname> --query="<sql>" [--json]` (alias: `q`)
+- `query [<dbname>] --query="<sql>" [--json]` (alias: `q`) - If `<dbname>` is omitted, uses the default database from config
 - `help [command] [subcommand]` (alias: `h`, `-h`, `--help`)
 
 ### Global Flags
@@ -137,6 +137,9 @@ go run -tags dbtool dbtool.go db load mydb /tmp/mydb.sql --overwrite
 # Reset database without confirmation
 go run -tags dbtool dbtool.go db wipe mydb --noconfirm
 
-# Run a query and output JSON
+# Run a query on default database
+go run -tags dbtool dbtool.go q --query="SELECT 1 AS one"
+
+# Run a query on specific database and output JSON
 go run -tags dbtool dbtool.go q mydb --query="SELECT 1 AS one" --json
 ```

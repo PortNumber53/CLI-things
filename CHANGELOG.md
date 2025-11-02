@@ -3,6 +3,7 @@
 ### Added
 
 - **Version flag**: Added `--version` flag to display version information for debugging purposes. Usage: `dbtool --version`
+- **Optional dbname for query**: The `query` command now accepts an optional `<dbname>` parameter. If omitted, it uses the default database from config (DB_NAME or DATABASE_URL). Usage: `dbtool query --query="SELECT 1"`
 
 ### Changed
 
