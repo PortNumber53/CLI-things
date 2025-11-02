@@ -67,6 +67,17 @@ go build -tags dbtool -o dbtool dbtool.go
 
 When `dbtool` starts it collects every `.env` file from the current directory upward until it reaches a directory containing a `.git` folder (the assumed repository root). Files that are closer to the root are applied first and files nearer your working directory are applied last, so local overrides win. Any environment variables defined across these files (for example `DBTOOL_CONFIG_FILE`) are available to the tool.
 
+**Configuration Priority (highest to lowest):**
+1. Environment variables passed directly on the command line
+2. Environment variables from `.env` files (local overrides root)
+3. Values from `config.ini` file
+
+This means you can override any configuration value by passing it as an environment variable:
+```bash
+DATABASE_URL="postgresql://user:pass@host:5432/db" dbtool db list
+DB_HOST=localhost DB_PORT=5433 dbtool table list
+```
+
 - **`DBTOOL_CONFIG_FILE`**: Optional path to the configuration file. Relative paths are resolved relative to the `.env` file that defined the variable. If none of the discovered `.env` files define it, the tool falls back to loading configuration from `~/.config/<current-folder-name>/config.ini` under the `[default]` section.
 
 Example `config.ini`:
@@ -96,9 +107,17 @@ Notes:
 - `query <dbname> --query="<sql>" [--json]` (alias: `q`)
 - `help [command] [subcommand]` (alias: `h`, `-h`, `--help`)
 
+### Global Flags
+
+- `-v, --verbose` - Show diagnostics about .env and config.ini resolution
+- `--version` - Show version information
+
 ### Examples
 
 ```bash
+# Show version
+go run -tags dbtool dbtool.go --version
+
 # Show summary help
 go run -tags dbtool dbtool.go help
 

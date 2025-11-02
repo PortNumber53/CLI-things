@@ -146,7 +146,13 @@ func applyEnvFile(path string) error {
 			vprintf("dbconf: resolving DBTOOL_CONFIG_FILE relative to %s -> %s\n", path, resolved)
 			value = resolved
 		}
-		os.Setenv(key, value)
+		// Only set the environment variable if it doesn't already exist
+		// This allows command-line environment variables to override .env file values
+		if _, exists := os.LookupEnv(key); !exists {
+			os.Setenv(key, value)
+		} else {
+			vprintf("dbconf: skipping %s from .env (already set in environment)\n", key)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("failed to read %s: %w", path, err)

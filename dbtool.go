@@ -13,9 +13,11 @@ import (
 	db "cli-things/utility/dbtool"
 )
 
+const version = "1.0.0"
+
 var verbose bool
 
-// parseAndStripGlobalFlags scans os.Args for global flags like --verbose/-v,
+// parseAndStripGlobalFlags scans os.Args for global flags like --verbose/-v and --version,
 // sets globals accordingly, and returns a cleaned slice of args without those flags.
 func parseAndStripGlobalFlags(args []string) []string {
 	cleaned := make([]string, 0, len(args))
@@ -24,6 +26,9 @@ func parseAndStripGlobalFlags(args []string) []string {
 		case "--verbose", "-v":
 			verbose = true
 			// do not append to cleaned
+		case "--version":
+			fmt.Printf("dbtool version %s\n", version)
+			os.Exit(0)
 		default:
 			cleaned = append(cleaned, a)
 		}
@@ -107,7 +112,13 @@ func applyEnvFile(path string) error {
 			}
 			value = resolved
 		}
-		os.Setenv(key, value)
+		// Only set the environment variable if it doesn't already exist
+		// This allows command-line environment variables to override .env file values
+		if _, exists := os.LookupEnv(key); !exists {
+			os.Setenv(key, value)
+		} else if verbose {
+			fmt.Fprintf(os.Stderr, "dbtool: skipping %s from .env (already set in environment)\n", key)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -136,6 +147,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  help [command] [subcommand]\n")
 	fmt.Fprintf(os.Stderr, "\nGlobal flags:\n")
 	fmt.Fprintf(os.Stderr, "  -v, --verbose   Show diagnostics about .env and config.ini resolution\n")
+	fmt.Fprintf(os.Stderr, "  --version       Show version information\n")
 }
 
 func helpSummary() {
