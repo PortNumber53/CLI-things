@@ -77,7 +77,6 @@ func cfDo(ctx context.Context, method, url, token string, body any, out any) err
 	return nil
 }
 
-
 func insertAccount(ctx context.Context, dbname string, acct json.RawMessage) error {
 	db, err := dbconf.ConnectDBAs(dbname)
 	if err != nil {

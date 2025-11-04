@@ -76,6 +76,8 @@ pipeline {
           scp -p systemd/cloudflare-backup.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/cloudflare-backup.conf.sample
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cloudflare-backup/config.conf ]; then sudo mv /tmp/cloudflare-backup.conf.sample /etc/cloudflare-backup/config.conf; else sudo rm -f /tmp/cloudflare-backup.conf.sample; fi"
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload"
+          # Run one of the utilities once so shared DB migrations are applied
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "/opt/cli-things/bin/cloudflare-backup --timeout=10s || true"
           # Enable and start the timers (system-wide)
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer cloudflare-backup.timer"
           # Optionally start the service immediately once
