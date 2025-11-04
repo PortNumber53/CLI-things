@@ -37,4 +37,3 @@ CREATE TABLE IF NOT EXISTS public.cloudflare_backup_runs (
     success boolean NOT NULL DEFAULT true,
     error text
 );
-

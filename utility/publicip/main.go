@@ -269,37 +269,6 @@ func firstIP(ctx context.Context, v4, v6 bool) (net.IP, string, error) {
 }
 
 // DB schema helpers
-func ensureTables(ctx context.Context, dbname string) error {
-	db, err := dbconf.ConnectDBAs(dbname)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS public.public_ip_history (
-           ip inet PRIMARY KEY,
-           first_use_at timestamptz NOT NULL DEFAULT now(),
-           last_use_at timestamptz
-         )`,
-		`CREATE TABLE IF NOT EXISTS public.dns_targets (
-           fqdn text PRIMARY KEY,
-           enabled boolean NOT NULL DEFAULT true
-         )`,
-		`CREATE TABLE IF NOT EXISTS public.dns_history (
-           fqdn text NOT NULL,
-           ip inet NOT NULL,
-           first_use_at timestamptz NOT NULL DEFAULT now(),
-           last_use_at timestamptz,
-           PRIMARY KEY (fqdn, ip)
-         )`,
-	}
-	for _, s := range stmts {
-		if _, err := db.ExecContext(ctx, s); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func seedDefaultTargets(ctx context.Context, dbname string, zoneName, host string) error {
 	db, err := dbconf.ConnectDBAs(dbname)
@@ -427,12 +396,8 @@ func main() {
 		}
 		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
 		defer cancelDB()
-		// shared migrations (filesystem-based), then legacy ensureTables for backward compat
+		// shared migrations (filesystem-based)
 		_ = dbconf.ApplyMigrationsFromDir(dbCtx, dbname, "./migrations")
-		if err := ensureTables(dbCtx, dbname); err != nil {
-			fmt.Fprintln(os.Stderr, "db error: ensure tables:", err)
-			os.Exit(1)
-		}
 	}
 
 	if initDNSTargets {

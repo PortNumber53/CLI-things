@@ -77,58 +77,6 @@ func cfDo(ctx context.Context, method, url, token string, body any, out any) err
 	return nil
 }
 
-func runMigrations(ctx context.Context, dbname string) error {
-	migs := []dbconf.Migration{
-		{
-			ID: "20251104_0001_create_cf_accounts",
-			SQL: `CREATE TABLE IF NOT EXISTS public.cloudflare_accounts (
-				id text PRIMARY KEY,
-				name text NOT NULL,
-				fetched_at timestamptz NOT NULL DEFAULT now(),
-				raw jsonb NOT NULL
-			)`,
-		},
-		{
-			ID: "20251104_0002_create_cf_zones",
-			SQL: `CREATE TABLE IF NOT EXISTS public.cloudflare_zones (
-				id text PRIMARY KEY,
-				account_id text,
-				name text NOT NULL,
-				status text,
-				fetched_at timestamptz NOT NULL DEFAULT now(),
-				raw jsonb NOT NULL
-			)`,
-		},
-		{
-			ID: "20251104_0003_create_cf_dns_records",
-			SQL: `CREATE TABLE IF NOT EXISTS public.cloudflare_dns_records (
-				zone_id text NOT NULL,
-				id text NOT NULL,
-				name text NOT NULL,
-				type text NOT NULL,
-				content text,
-				ttl integer,
-				proxied boolean,
-				fetched_at timestamptz NOT NULL DEFAULT now(),
-				raw jsonb NOT NULL,
-				PRIMARY KEY (zone_id, id)
-			)`,
-		},
-		{
-			ID: "20251104_0004_create_cf_backup_runs",
-			SQL: `CREATE TABLE IF NOT EXISTS public.cloudflare_backup_runs (
-				id bigserial PRIMARY KEY,
-				run_at timestamptz NOT NULL DEFAULT now(),
-				accounts_collected integer NOT NULL DEFAULT 0,
-				zones_collected integer NOT NULL DEFAULT 0,
-				records_collected integer NOT NULL DEFAULT 0,
-				success boolean NOT NULL DEFAULT true,
-				error text
-			)`,
-		},
-	}
-	return dbconf.ApplyMigrations(ctx, dbname, migs)
-}
 
 func insertAccount(ctx context.Context, dbname string, acct json.RawMessage) error {
 	db, err := dbconf.ConnectDBAs(dbname)
@@ -215,10 +163,6 @@ func main() {
 
 	// try shared migrations dir first (if present)
 	_ = dbconf.ApplyMigrationsFromDir(ctx, dbname, "./migrations")
-	if err := runMigrations(ctx, dbname); err != nil {
-		fmt.Fprintln(os.Stderr, "cf-backup: migrations failed:", err)
-		os.Exit(1)
-	}
 
 	accounts := 0
 	zones := 0
