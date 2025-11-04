@@ -11,6 +11,13 @@ pipeline {
     BINARY_NAME = 'publicip'
     BUILD_DIR   = 'utility/publicip'
     BUILD_OUT   = 'bin/publicip'
+
+    CF_BINARY_NAME = 'cloudflare-backup'
+    CF_BUILD_DIR   = 'utility/cloudflare-backup'
+    CF_BUILD_OUT   = 'bin/cloudflare-backup'
+
+    DBTOOL_BUILD_DIR = 'utility/dbtool'
+    DBTOOL_BUILD_OUT = 'bin/dbtool'
     DEPLOY_HOST = 'crash'
     DEPLOY_USER = 'grimlock'
     DEPLOY_PATH = '/opt/cli-things/bin/publicip'
@@ -28,7 +35,11 @@ pipeline {
         sh 'go version || true'
         sh 'go mod download'
         sh 'go build -o ${BUILD_OUT} ./${BUILD_DIR}'
+        sh 'go build -o ${CF_BUILD_OUT} ./${CF_BUILD_DIR}'
+        sh 'go build -o ${DBTOOL_BUILD_OUT} ./${DBTOOL_BUILD_DIR}'
         sh 'file ${BUILD_OUT} || true'
+        sh 'file ${CF_BUILD_OUT} || true'
+        sh 'file ${DBTOOL_BUILD_OUT} || true'
       }
     }
 
@@ -40,29 +51,56 @@ pipeline {
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p $(dirname ${DEPLOY_PATH}) && sudo chown ${DEPLOY_USER} $(dirname ${DEPLOY_PATH})"
           # Copy the binary
           scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
+          scp -p ${CF_BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/cli-things/bin/cloudflare-backup
           # Ensure executable bit set
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
           # Install/Update system-wide systemd unit and timers
           scp -p systemd/publicip.service systemd/publicip.timer \
                  systemd/publicip-collect.service systemd/publicip-collect.timer \
                  systemd/publicip-sync.service systemd/publicip-sync.timer \
+                 systemd/cloudflare-backup.service systemd/cloudflare-backup.timer \
                  ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && \
                                              sudo mv /tmp/publicip.timer /etc/systemd/system/publicip.timer && \
                                              sudo mv /tmp/publicip-collect.service /etc/systemd/system/publicip-collect.service && \
                                              sudo mv /tmp/publicip-collect.timer /etc/systemd/system/publicip-collect.timer && \
                                              sudo mv /tmp/publicip-sync.service /etc/systemd/system/publicip-sync.service && \
-                                             sudo mv /tmp/publicip-sync.timer /etc/systemd/system/publicip-sync.timer"
+                                             sudo mv /tmp/publicip-sync.timer /etc/systemd/system/publicip-sync.timer && \
+                                             sudo mv /tmp/cloudflare-backup.service /etc/systemd/system/cloudflare-backup.service && \
+                                             sudo mv /tmp/cloudflare-backup.timer /etc/systemd/system/cloudflare-backup.timer"
           # Ensure environment directory exists and seed env file if absent
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things"
           scp -p systemd/publicip.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/publicip.conf.sample
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cli-things/publicip.conf ]; then sudo mv /tmp/publicip.conf.sample /etc/cli-things/publicip.conf; else sudo rm -f /tmp/publicip.conf.sample; fi"
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload"
           # Enable and start the timers (system-wide)
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer cloudflare-backup.timer"
           # Optionally start the service immediately once
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl start publicip.service || true"
         '''
+      }
+    }
+
+    stage('Deploy dbtool') {
+      matrix {
+        axes {
+          axis {
+            name 'DBTOOL_HOST'
+            values 'crash', 'brain', 'pinky'
+          }
+        }
+        stages {
+          stage('Push dbtool') {
+            steps {
+              sh '''
+                set -euo pipefail
+                ssh ${DEPLOY_USER}@${DBTOOL_HOST} "sudo mkdir -p /usr/local/bin"
+                scp -p ${DBTOOL_BUILD_OUT} ${DEPLOY_USER}@${DBTOOL_HOST}:/tmp/dbtool
+                ssh ${DEPLOY_USER}@${DBTOOL_HOST} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
+              '''
+            }
+          }
+        }
       }
     }
   }

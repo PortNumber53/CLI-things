@@ -1,0 +1,14 @@
+[Unit]
+Description=Cloudflare backup utility (daily)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/Volumes/2TBb/source/CLI-things
+Environment=CLOUDFLARE_API_KEY=
+ExecStart=/usr/local/bin/go run ./utility/cloudflare-backup --timeout=60s
+User=publicip
+
+[Install]
+WantedBy=multi-user.target

@@ -2,11 +2,13 @@ package dbconf
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	_ "github.com/lib/pq"
@@ -14,8 +16,17 @@ import (
 
 func isVerbose() bool { return strings.TrimSpace(os.Getenv("DBTOOL_VERBOSE")) == "1" }
 
-func vprintln(a ...any) { if isVerbose() { fmt.Fprintln(os.Stderr, a...) } }
-func vprintf(format string, a ...any) { if isVerbose() { fmt.Fprintf(os.Stderr, format, a...) } }
+func vprintln(a ...any) {
+	if isVerbose() {
+		fmt.Fprintln(os.Stderr, a...)
+	}
+}
+
+func vprintf(format string, a ...any) {
+	if isVerbose() {
+		fmt.Fprintf(os.Stderr, format, a...)
+	}
+}
 
 // DBConfig holds database configuration
 type DBConfig struct {
@@ -133,13 +144,15 @@ func applyEnvFile(path string) error {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
 		}
 		sepIndex := strings.Index(line, "=")
-		if sepIndex <= 0 { continue }
+		if sepIndex <= 0 {
+			continue
+		}
 		key := strings.TrimSpace(line[:sepIndex])
 		value := strings.TrimSpace(line[sepIndex+1:])
 		if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && len(value) >= 2 {
-			value = value[1:len(value)-1]
+			value = value[1 : len(value)-1]
 		} else if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
-			value = value[1:len(value)-1]
+			value = value[1 : len(value)-1]
 		}
 		if key == "DBTOOL_CONFIG_FILE" && value != "" && !filepath.IsAbs(value) {
 			resolved := filepath.Join(filepath.Dir(path), value)
@@ -163,7 +176,9 @@ func applyEnvFile(path string) error {
 // loadEnvFromNearestDotEnv walks up from cwd to repo root and applies all .env files found.
 func loadEnvFromNearestDotEnv() error {
 	currentDir, err := os.Getwd()
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	var envPaths []string
 	vprintf("dbconf: searching for .env files from %s\n", currentDir)
 	for {
@@ -173,63 +188,69 @@ func loadEnvFromNearestDotEnv() error {
 			vprintf("dbconf: found .env: %s\n", envPath)
 		}
 		gitPath := filepath.Join(currentDir, ".git")
-		if info, err := os.Stat(gitPath); err == nil && info.IsDir() { break }
+		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
+			break
+		}
 		parent := filepath.Dir(currentDir)
-		if parent == currentDir { break }
+		if parent == currentDir {
+			break
+		}
 		currentDir = parent
 	}
 	for i := len(envPaths) - 1; i >= 0; i-- {
 		vprintf("dbconf: applying .env: %s\n", envPaths[i])
-		if err := applyEnvFile(envPaths[i]); err != nil { return err }
+		if err := applyEnvFile(envPaths[i]); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // load loads DB configuration, preferring DBTOOL_CONFIG_FILE, else ~/.config/<cwd>/config.ini
 func load() (*DBConfig, error) {
-    // Ensure .env variables are loaded to mirror dbtool behavior
-    _ = loadEnvFromNearestDotEnv()
-    configPath := strings.TrimSpace(os.Getenv("DBTOOL_CONFIG_FILE"))
-    var config map[string]string
-    if configPath == "" {
-        folderName, err := getCurrentFolderName()
-        if err != nil {
-            // Non-fatal; continue with empty config
-            vprintln("dbconf: could not determine current folder; skipping config.ini")
-            config = make(map[string]string)
-        } else {
-            homeDir, herr := os.UserHomeDir()
-            if herr != nil {
-                // When running under systemd without HOME, skip config.ini gracefully
-                vprintln("dbconf: HOME not set; skipping config.ini and relying on environment variables only")
-                config = make(map[string]string)
-            } else {
-                configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
-                vprintln("dbconf: using default config.ini:", configPath)
-                // Check if file exists before trying to read it
-                if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
-                    vprintln("dbconf: config.ini not found; relying on environment variables only")
-                    config = make(map[string]string)
-                } else {
-                    vprintln("dbconf: reading config.ini:", configPath)
-                    var rerr error
-                    config, rerr = readConfigFile(configPath)
-                    if rerr != nil {
-                        return nil, rerr
-                    }
-                }
-            }
-        }
-    } else {
-        // DBTOOL_CONFIG_FILE is explicitly set, so it must exist
-        vprintln("dbconf: using DBTOOL_CONFIG_FILE:", configPath)
-        vprintln("dbconf: reading config.ini:", configPath)
-        var rerr error
-        config, rerr = readConfigFile(configPath)
-        if rerr != nil {
-            return nil, rerr
-        }
-    }
+	// Ensure .env variables are loaded to mirror dbtool behavior
+	_ = loadEnvFromNearestDotEnv()
+	configPath := strings.TrimSpace(os.Getenv("DBTOOL_CONFIG_FILE"))
+	var config map[string]string
+	if configPath == "" {
+		folderName, err := getCurrentFolderName()
+		if err != nil {
+			// Non-fatal; continue with empty config
+			vprintln("dbconf: could not determine current folder; skipping config.ini")
+			config = make(map[string]string)
+		} else {
+			homeDir, herr := os.UserHomeDir()
+			if herr != nil {
+				// When running under systemd without HOME, skip config.ini gracefully
+				vprintln("dbconf: HOME not set; skipping config.ini and relying on environment variables only")
+				config = make(map[string]string)
+			} else {
+				configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
+				vprintln("dbconf: using default config.ini:", configPath)
+				// Check if file exists before trying to read it
+				if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
+					vprintln("dbconf: config.ini not found; relying on environment variables only")
+					config = make(map[string]string)
+				} else {
+					vprintln("dbconf: reading config.ini:", configPath)
+					var rerr error
+					config, rerr = readConfigFile(configPath)
+					if rerr != nil {
+						return nil, rerr
+					}
+				}
+			}
+		}
+	} else {
+		// DBTOOL_CONFIG_FILE is explicitly set, so it must exist
+		vprintln("dbconf: using DBTOOL_CONFIG_FILE:", configPath)
+		vprintln("dbconf: reading config.ini:", configPath)
+		var rerr error
+		config, rerr = readConfigFile(configPath)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
 
 	dbConfig := &DBConfig{
 		Host:          firstNonEmpty(os.Getenv("DB_HOST"), config["DB_HOST"], config["HOST"]),
@@ -378,4 +399,66 @@ func ConnectDBAs(dbname string) (*sql.DB, error) {
 		}
 	}
 	return db, nil
+}
+
+type Migration struct {
+	ID  string
+	SQL string
+}
+
+func ensureMigrationsTable(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS public._migrations (
+		id text PRIMARY KEY,
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`)
+	return err
+}
+
+func ApplyMigrations(ctx context.Context, dbname string, migrations []Migration) error {
+	db, err := ConnectDBAs(dbname)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureMigrationsTable(ctx, db); err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id FROM public._migrations`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	done := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		done[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	sort.Slice(migrations, func(i, j int) bool { return migrations[i].ID < migrations[j].ID })
+	for _, m := range migrations {
+		if _, exists := done[m.ID]; exists {
+			continue
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO public._migrations (id, applied_at) VALUES ($1, now())`, m.ID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
