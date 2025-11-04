@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"time"
+
 	"cli-things/utility/dbconf"
 )
 
@@ -44,8 +45,25 @@ type cfDNSRecord struct {
 }
 
 type cfDNSResp struct {
-	Success bool       `json:"success"`
+	Success bool          `json:"success"`
 	Result  []cfDNSRecord `json:"result"`
+}
+
+func cfGetARecords(ctx context.Context, token, zoneID, fqdn string) ([]cfDNSRecord, error) {
+	var dr cfDNSResp
+	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records?type=A&name=" + fqdn
+	if err := cfDoWithRetry(ctx, http.MethodGet, url, token, nil, &dr, 3, 500*time.Millisecond); err != nil {
+		return nil, err
+	}
+	if !dr.Success {
+		return nil, fmt.Errorf("cloudflare api returned unsuccessful response")
+	}
+	return dr.Result, nil
+}
+
+func cfDeleteDNSRecord(ctx context.Context, token, zoneID, recordID string) error {
+	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records/" + recordID
+	return cfDoWithRetry(ctx, http.MethodDelete, url, token, nil, nil, 3, 500*time.Millisecond)
 }
 
 func getCurrentStoredIP(ctx context.Context, dbname string) (string, error) {
@@ -364,19 +382,19 @@ func listEnabledTargets(ctx context.Context, dbname string) ([]string, error) {
 
 func main() {
 	var (
-		ipv4    bool
-		ipv6    bool
-		timeout time.Duration
-		showSrc bool
-		store   bool
-		dbname  string
-		syncCF  bool
-		cfHost  string
-		cfTimeout time.Duration
-		collectCF bool
+		ipv4           bool
+		ipv6           bool
+		timeout        time.Duration
+		showSrc        bool
+		store          bool
+		dbname         string
+		syncCF         bool
+		cfHost         string
+		cfTimeout      time.Duration
+		collectCF      bool
 		initDNSTargets bool
-		forceSync bool
-		dbTimeout time.Duration
+		forceSync      bool
+		dbTimeout      time.Duration
 	)
 	flag.BoolVar(&ipv4, "ipv4", false, "prefer IPv4 only")
 	flag.BoolVar(&ipv6, "ipv6", false, "prefer IPv6 only")
@@ -572,8 +590,12 @@ ON CONFLICT (ip) DO UPDATE SET
 		}
 		changed := false
 		for _, fq := range targets {
+			records, err := cfGetARecords(cfCtx, token, zID, fq)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "cf error: list records:", fq, err)
+				os.Exit(1)
+			}
 			var rec *cfDNSRecord
-			var err error
 			// Determine need from DB unless force is set
 			needUpdate := forceSync
 			if !needUpdate {
@@ -595,11 +617,18 @@ ON CONFLICT (ip) DO UPDATE SET
 			}
 			if needUpdate {
 				// Retry up to 3 times with exponential backoff to avoid transient timeouts
-				upErr := cfDoWithRetry(cfCtx, func() string { if rec == nil { return http.MethodPost } ; return http.MethodPatch }(),
+				upErr := cfDoWithRetry(cfCtx, func() string {
+					if rec == nil {
+						return http.MethodPost
+					}
+					return http.MethodPatch
+				}(),
 					func() string {
-						if rec == nil { return "https://api.cloudflare.com/client/v4/zones/"+zID+"/dns_records" }
-						return "https://api.cloudflare.com/client/v4/zones/"+zID+"/dns_records/"+rec.ID
-					}(), token, map[string]any{"type":"A","name":fq,"content":currentIP,"ttl":300,"proxied":false}, nil, 3, 500*time.Millisecond)
+						if rec == nil {
+							return "https://api.cloudflare.com/client/v4/zones/" + zID + "/dns_records"
+						}
+						return "https://api.cloudflare.com/client/v4/zones/" + zID + "/dns_records/" + rec.ID
+					}(), token, map[string]any{"type": "A", "name": fq, "content": currentIP, "ttl": 300, "proxied": false}, nil, 3, 500*time.Millisecond)
 				if upErr != nil {
 					fmt.Fprintln(os.Stderr, "cf error: update record:", fq, upErr)
 					os.Exit(1)
@@ -607,6 +636,16 @@ ON CONFLICT (ip) DO UPDATE SET
 				// Reflect the change in DB history
 				if err := setCurrentDNSIP(dbCtx, dbname, fq, currentIP); err != nil {
 					fmt.Fprintln(os.Stderr, "db error: set dns ip:", fq, err)
+					os.Exit(1)
+				}
+				changed = true
+			}
+			for _, existing := range records {
+				if strings.TrimSpace(existing.Content) == currentIP {
+					continue
+				}
+				if err := cfDeleteDNSRecord(cfCtx, token, zID, existing.ID); err != nil {
+					fmt.Fprintln(os.Stderr, "cf error: delete stale record:", fq, existing.ID, err)
 					os.Exit(1)
 				}
 				changed = true
