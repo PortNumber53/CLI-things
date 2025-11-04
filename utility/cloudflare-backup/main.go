@@ -213,6 +213,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// try shared migrations dir first (if present)
+	_ = dbconf.ApplyMigrationsFromDir(ctx, dbname, "./migrations")
 	if err := runMigrations(ctx, dbname); err != nil {
 		fmt.Fprintln(os.Stderr, "cf-backup: migrations failed:", err)
 		os.Exit(1)

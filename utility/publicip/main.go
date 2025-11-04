@@ -427,6 +427,8 @@ func main() {
 		}
 		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
 		defer cancelDB()
+		// shared migrations (filesystem-based), then legacy ensureTables for backward compat
+		_ = dbconf.ApplyMigrationsFromDir(dbCtx, dbname, "./migrations")
 		if err := ensureTables(dbCtx, dbname); err != nil {
 			fmt.Fprintln(os.Stderr, "db error: ensure tables:", err)
 			os.Exit(1)

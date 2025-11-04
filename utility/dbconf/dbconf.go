@@ -462,3 +462,31 @@ func ApplyMigrations(ctx context.Context, dbname string, migrations []Migration)
 	}
 	return nil
 }
+
+func ApplyMigrationsFromDir(ctx context.Context, dbname, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var migs []Migration
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		name := ent.Name()
+		if !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		migs = append(migs, Migration{ID: name, SQL: string(b)})
+	}
+	sort.Slice(migs, func(i, j int) bool { return migs[i].ID < migs[j].ID })
+	return ApplyMigrations(ctx, dbname, migs)
+}
