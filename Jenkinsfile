@@ -59,6 +59,7 @@ pipeline {
                  systemd/publicip-collect.service systemd/publicip-collect.timer \
                  systemd/publicip-sync.service systemd/publicip-sync.timer \
                  systemd/cloudflare-backup.service systemd/cloudflare-backup.timer \
+                 systemd/cloudflare-backup.conf.sample \
                  ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && \
                                              sudo mv /tmp/publicip.timer /etc/systemd/system/publicip.timer && \
@@ -69,9 +70,11 @@ pipeline {
                                              sudo mv /tmp/cloudflare-backup.service /etc/systemd/system/cloudflare-backup.service && \
                                              sudo mv /tmp/cloudflare-backup.timer /etc/systemd/system/cloudflare-backup.timer"
           # Ensure environment directory exists and seed env file if absent
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things && sudo mkdir -p /etc/cloudflare-backup"
           scp -p systemd/publicip.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/publicip.conf.sample
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cli-things/publicip.conf ]; then sudo mv /tmp/publicip.conf.sample /etc/cli-things/publicip.conf; else sudo rm -f /tmp/publicip.conf.sample; fi"
+          scp -p systemd/cloudflare-backup.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/cloudflare-backup.conf.sample
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cloudflare-backup/config.conf ]; then sudo mv /tmp/cloudflare-backup.conf.sample /etc/cloudflare-backup/config.conf; else sudo rm -f /tmp/cloudflare-backup.conf.sample; fi"
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload"
           # Enable and start the timers (system-wide)
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer cloudflare-backup.timer"

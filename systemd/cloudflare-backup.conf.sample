@@ -1,0 +1,10 @@
+# Cloudflare backup configuration
+# Copy to /etc/cloudflare-backup/config.conf and adjust values
+
+# Required: Cloudflare API token with permissions to list accounts/zones/dns records
+CLOUDFLARE_API_KEY=
+
+# Optional: override database
+# DB_NAME=
+# DATABASE_URL=
+
