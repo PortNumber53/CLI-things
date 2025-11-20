@@ -358,6 +358,59 @@ func load() (*DBConfig, error) {
 	return dbConfig, nil
 }
 
+// GetRawConfig returns the raw key/value configuration map loaded from
+// config.ini (respecting DBTOOL_CONFIG_FILE and the default path). Only
+// the [default] section and top-level keys are considered, matching the
+// behavior used for DB settings.
+func GetRawConfig() (map[string]string, error) {
+	// Reuse the same resolution logic as load(), but expose the config map
+	// so callers (like utilities) can read additional keys such as
+	// CLOUDFLARE_API_KEY.
+	_ = loadEnvFromNearestDotEnv()
+
+	configPath := strings.TrimSpace(os.Getenv("DBTOOL_CONFIG_FILE"))
+	var config map[string]string
+	if configPath == "" {
+		folderName, err := getCurrentFolderName()
+		if err != nil {
+			vprintln("dbconf: could not determine current folder; skipping config.ini in GetRawConfig")
+			config = make(map[string]string)
+		} else {
+			homeDir, herr := os.UserHomeDir()
+			if herr != nil {
+				vprintln("dbconf: HOME not set; skipping config.ini in GetRawConfig")
+				config = make(map[string]string)
+			} else {
+				configPath = filepath.Join(homeDir, ".config", folderName, "config.ini")
+				vprintln("dbconf: using default config.ini in GetRawConfig:", configPath)
+				if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
+					vprintln("dbconf: config.ini not found in GetRawConfig; returning empty config")
+					config = make(map[string]string)
+				} else {
+					vprintln("dbconf: reading config.ini in GetRawConfig:", configPath)
+					var rerr error
+					config, rerr = readConfigFile(configPath)
+					if rerr != nil {
+						return nil, rerr
+					}
+				}
+			}
+		}
+	} else {
+		vprintln("dbconf: using DBTOOL_CONFIG_FILE in GetRawConfig:", configPath)
+		vprintln("dbconf: reading config.ini in GetRawConfig:", configPath)
+		var rerr error
+		config, rerr = readConfigFile(configPath)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	if config == nil {
+		config = make(map[string]string)
+	}
+	return config, nil
+}
+
 // GetDBConfig returns loaded configuration
 func GetDBConfig() (*DBConfig, error) { return load() }
 

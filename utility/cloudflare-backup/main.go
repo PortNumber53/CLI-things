@@ -140,6 +140,8 @@ func main() {
 	var dbname string
 	var timeout time.Duration
 	var verbose bool
+	// Future: support --profile to select non-default sections from config.ini.
+	// For now, we only use the [default] section via dbconf.GetRawConfig.
 	flag.StringVar(&dbname, "db", "", "database name (default from dbconf)")
 	flag.DurationVar(&timeout, "timeout", 45*time.Second, "overall timeout for Cloudflare backup")
 	flag.BoolVar(&verbose, "v", false, "enable verbose diagnostics (dbconf, migrations)")
@@ -152,7 +154,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cf-backup: verbose mode enabled (DBTOOL_VERBOSE=1)")
 	}
 
-	token := strings.TrimSpace(os.Getenv("CLOUDFLARE_API_KEY"))
+	// Load config and .env so we can resolve CLOUDFLARE_API_KEY from multiple
+	// sources. Precedence:
+	//   1. Explicit environment variable / .env (via os.Getenv)
+	//   2. config.ini [default] section (via dbconf.GetRawConfig)
+	cfg, _ := dbconf.GetRawConfig()
+	envToken := strings.TrimSpace(os.Getenv("CLOUDFLARE_API_KEY"))
+	cfgToken := strings.TrimSpace(cfg["CLOUDFLARE_API_KEY"])
+	token := envToken
+	if token == "" {
+		token = cfgToken
+	}
 	if token == "" {
 		fmt.Fprintln(os.Stderr, "cf-backup: CLOUDFLARE_API_KEY not set")
 		os.Exit(2)
