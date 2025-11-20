@@ -48,7 +48,9 @@ pipeline {
         sh 'go mod download'
         sh 'go build -o ${BUILD_OUT} ./${BUILD_DIR}'
         sh 'go build -o ${CF_BUILD_OUT} ./${CF_BUILD_DIR}'
-        sh 'go build -o ${DBTOOL_BUILD_OUT} ./${DBTOOL_BUILD_DIR}'
+        // Build dbtool using its dedicated main with the dbtool build tag,
+        // so we get an executable binary (not a package archive).
+        sh 'go build -tags dbtool -o ${DBTOOL_BUILD_OUT} ./dbtool.go'
         sh 'file ${BUILD_OUT} || true'
         sh 'file ${CF_BUILD_OUT} || true'
         sh 'file ${DBTOOL_BUILD_OUT} || true'
