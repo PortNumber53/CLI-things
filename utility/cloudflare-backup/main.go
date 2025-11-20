@@ -139,9 +139,18 @@ func recordRun(ctx context.Context, dbname string, accounts, zones, records int,
 func main() {
 	var dbname string
 	var timeout time.Duration
+	var verbose bool
 	flag.StringVar(&dbname, "db", "", "database name (default from dbconf)")
 	flag.DurationVar(&timeout, "timeout", 45*time.Second, "overall timeout for Cloudflare backup")
+	flag.BoolVar(&verbose, "v", false, "enable verbose diagnostics (dbconf, migrations)")
 	flag.Parse()
+
+	if verbose {
+		// Enable verbose mode in shared dbconf so we can see how configuration
+		// and migrations are resolved. This matches dbtool's DBTOOL_VERBOSE=1.
+		_ = os.Setenv("DBTOOL_VERBOSE", "1")
+		fmt.Fprintln(os.Stderr, "cf-backup: verbose mode enabled (DBTOOL_VERBOSE=1)")
+	}
 
 	token := strings.TrimSpace(os.Getenv("CLOUDFLARE_API_KEY"))
 	if token == "" {
@@ -160,8 +169,14 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// try shared migrations dir first (if present)
-	_ = dbconf.ApplyMigrationsFromDir(ctx, dbname, "./migrations")
+	// Try shared migrations directory first (if present). This respects
+	// DB_MIGRATIONS_DIR / MIGRATIONS_DIR when configured, falling back
+	// to ./migrations. If migrations fail, abort early so we don't try
+	// to write into non-existent tables.
+	if err := dbconf.ApplyConfiguredMigrations(ctx, dbname); err != nil {
+		fmt.Fprintln(os.Stderr, "cf-backup: migrations failed:", err)
+		os.Exit(1)
+	}
 
 	accounts := 0
 	zones := 0

@@ -253,14 +253,54 @@ func load() (*DBConfig, error) {
 	}
 
 	dbConfig := &DBConfig{
-		Host:          firstNonEmpty(os.Getenv("DB_HOST"), config["DB_HOST"], config["HOST"]),
-		Port:          firstNonEmpty(os.Getenv("DB_PORT"), config["DB_PORT"], config["PORT"]),
-		Name:          firstNonEmpty(os.Getenv("DB_NAME"), config["DB_NAME"], config["NAME"]),
-		User:          firstNonEmpty(os.Getenv("DB_USER"), config["DB_USER"], config["USER"]),
-		Password:      firstNonEmpty(os.Getenv("DB_PASSWORD"), config["DB_PASSWORD"], config["PASSWORD"]),
-		SSLMode:       firstNonEmpty(os.Getenv("DB_SSLMODE"), config["DB_SSLMODE"], config["SSL_MODE"]),
-		MigrationsDir: firstNonEmpty(os.Getenv("DB_MIGRATIONS_DIR"), config["DB_MIGRATIONS_DIR"], config["MIGRATIONS_DIR"]),
-		URL:           firstNonEmpty(os.Getenv("DATABASE_URL"), config["DATABASE_URL"], config["DATABASE_URL"]),
+		Host: firstNonEmpty(
+			os.Getenv("DB_HOST"),
+			config["DB_HOST"],
+			config["HOST"],
+		),
+		Port: firstNonEmpty(
+			os.Getenv("DB_PORT"),
+			config["DB_PORT"],
+			config["PORT"],
+		),
+		// Support both DB_NAME and DB_DATABASE for compatibility with existing app envs
+		Name: firstNonEmpty(
+			os.Getenv("DB_NAME"),
+			os.Getenv("DB_DATABASE"),
+			config["DB_NAME"],
+			config["DB_DATABASE"],
+			config["NAME"],
+		),
+		// Support both DB_USER and DB_USERNAME
+		User: firstNonEmpty(
+			os.Getenv("DB_USER"),
+			os.Getenv("DB_USERNAME"),
+			config["DB_USER"],
+			config["DB_USERNAME"],
+			config["USER"],
+		),
+		Password: firstNonEmpty(
+			os.Getenv("DB_PASSWORD"),
+			config["DB_PASSWORD"],
+			config["PASSWORD"],
+		),
+		// Support both DB_SSLMODE and DB_SSL_MODE
+		SSLMode: firstNonEmpty(
+			os.Getenv("DB_SSLMODE"),
+			os.Getenv("DB_SSL_MODE"),
+			config["DB_SSLMODE"],
+			config["DB_SSL_MODE"],
+			config["SSL_MODE"],
+		),
+		MigrationsDir: firstNonEmpty(
+			os.Getenv("DB_MIGRATIONS_DIR"),
+			config["DB_MIGRATIONS_DIR"],
+			config["MIGRATIONS_DIR"],
+		),
+		URL: firstNonEmpty(
+			os.Getenv("DATABASE_URL"),
+			config["DATABASE_URL"],
+		),
 	}
 
 	if dbConfig.URL != "" {
@@ -274,8 +314,25 @@ func load() (*DBConfig, error) {
 	}
 
 	if isVerbose() {
-		vprintf("dbconf: parsed config keys: DB_HOST=%q DB_PORT=%q DB_NAME=%q DB_USER=%q DB_SSLMODE=%q DATABASE_URL_present=%v\n",
-			dbConfig.Host, dbConfig.Port, dbConfig.Name, dbConfig.User, dbConfig.SSLMode, dbConfig.URL != "")
+		vprintf("dbconf: parsed config keys: DB_HOST=%q DB_PORT=%q DB_NAME=%q DB_USER=%q DB_SSLMODE=%q DB_MIGRATIONS_DIR=%q DATABASE_URL_present=%v\n",
+			dbConfig.Host, dbConfig.Port, dbConfig.Name, dbConfig.User, dbConfig.SSLMode, dbConfig.MigrationsDir, dbConfig.URL != "")
+
+		// Detailed resolution traces so callers can see where values came from.
+		vprintf("dbconf: resolution DB_HOST: env[DB_HOST]=%q config[DB_HOST]=%q config[HOST]=%q -> %q\n",
+			os.Getenv("DB_HOST"), config["DB_HOST"], config["HOST"], dbConfig.Host)
+		vprintf("dbconf: resolution DB_PORT: env[DB_PORT]=%q config[DB_PORT]=%q config[PORT]=%q -> %q\n",
+			os.Getenv("DB_PORT"), config["DB_PORT"], config["PORT"], dbConfig.Port)
+		vprintf("dbconf: resolution DB_NAME: env[DB_NAME]=%q env[DB_DATABASE]=%q config[DB_NAME]=%q config[DB_DATABASE]=%q config[NAME]=%q -> %q\n",
+			os.Getenv("DB_NAME"), os.Getenv("DB_DATABASE"), config["DB_NAME"], config["DB_DATABASE"], config["NAME"], dbConfig.Name)
+		vprintf("dbconf: resolution DB_USER: env[DB_USER]=%q env[DB_USERNAME]=%q config[DB_USER]=%q config[DB_USERNAME]=%q config[USER]=%q -> %q\n",
+			os.Getenv("DB_USER"), os.Getenv("DB_USERNAME"), config["DB_USER"], config["DB_USERNAME"], config["USER"], dbConfig.User)
+		vprintf("dbconf: resolution DB_SSLMODE: env[DB_SSLMODE]=%q env[DB_SSL_MODE]=%q config[DB_SSLMODE]=%q config[DB_SSL_MODE]=%q config[SSL_MODE]=%q -> %q\n",
+			os.Getenv("DB_SSLMODE"), os.Getenv("DB_SSL_MODE"), config["DB_SSLMODE"], config["DB_SSL_MODE"], config["SSL_MODE"], dbConfig.SSLMode)
+		vprintf("dbconf: resolution DB_MIGRATIONS_DIR: env[DB_MIGRATIONS_DIR]=%q config[DB_MIGRATIONS_DIR]=%q config[MIGRATIONS_DIR]=%q -> %q\n",
+			os.Getenv("DB_MIGRATIONS_DIR"), config["DB_MIGRATIONS_DIR"], config["MIGRATIONS_DIR"], dbConfig.MigrationsDir)
+		vprintf("dbconf: resolution DATABASE_URL: env[DATABASE_URL]=%q config[DATABASE_URL]=%q -> present=%v\n",
+			os.Getenv("DATABASE_URL"), config["DATABASE_URL"], strings.TrimSpace(dbConfig.URL) != "")
+
 		if u := strings.TrimSpace(dbConfig.URL); u != "" {
 			if pu, err := url.Parse(u); err == nil {
 				if pu.User != nil {
@@ -489,4 +546,23 @@ func ApplyMigrationsFromDir(ctx context.Context, dbname, dir string) error {
 	}
 	sort.Slice(migs, func(i, j int) bool { return migs[i].ID < migs[j].ID })
 	return ApplyMigrations(ctx, dbname, migs)
+}
+
+// ApplyConfiguredMigrations applies SQL migrations using the configured
+// migrations directory (DB_MIGRATIONS_DIR / MIGRATIONS_DIR) when set,
+// falling back to ./migrations. This mirrors dbtool's configuration
+// resolution while keeping callers simple.
+func ApplyConfiguredMigrations(ctx context.Context, dbname string) error {
+	cfg, err := GetDBConfig()
+	if err != nil {
+		return err
+	}
+	dir := strings.TrimSpace(cfg.MigrationsDir)
+	if dir == "" {
+		dir = "./migrations"
+	}
+	if isVerbose() {
+		vprintf("dbconf: ApplyConfiguredMigrations db=%q dir=%q\n", dbname, dir)
+	}
+	return ApplyMigrationsFromDir(ctx, dbname, dir)
 }

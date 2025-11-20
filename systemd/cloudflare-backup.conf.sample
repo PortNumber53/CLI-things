@@ -1,10 +1,35 @@
 # Cloudflare backup configuration
 # Copy to /etc/cloudflare-backup/config.conf and adjust values
-
+#
 # Required: Cloudflare API token with permissions to list accounts/zones/dns records
 CLOUDFLARE_API_KEY=
-
-# Optional: override database
-# DB_NAME=
-# DATABASE_URL=
-
+#
+#
+# Database configuration
+#
+# Preferred: PostgreSQL DSN
+#   DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
+DATABASE_URL=
+#
+# Or provide discrete settings. The backup tool (via dbconf) supports both the
+# generic DB_* names used by other apps and its own historical names:
+#
+# Host / port
+# DB_HOST=<hostname>
+# DB_PORT=<port>
+#
+# Database name (either is accepted)
+# DB_NAME=<database name>
+# DB_DATABASE=<database name>
+#
+# Username (either is accepted)
+# DB_USER=<username>
+# DB_USERNAME=<username>
+#
+# Password
+# DB_PASSWORD=<password>
+#
+# SSL mode (either is accepted)
+# DB_SSLMODE=disable
+# DB_SSL_MODE=disable
+#

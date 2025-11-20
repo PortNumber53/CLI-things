@@ -1,3 +1,8 @@
+def INSTALL_TARGETS = [
+  'dbtool'          : ['brain', 'crash', 'pinky', 'zenbook'],
+  'cloudflare-backup': ['crash'],
+]
+
 pipeline {
   agent any
 
@@ -49,12 +54,11 @@ pipeline {
           set -euo pipefail
           # Ensure target directories exist
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p $(dirname ${DEPLOY_PATH}) && sudo chown ${DEPLOY_USER} $(dirname ${DEPLOY_PATH})"
-          # Copy the binary
+          # Copy the publicip binary
           scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
-          scp -p ${CF_BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/cli-things/bin/cloudflare-backup
           # Ensure executable bit set
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
-          # Install/Update system-wide systemd unit and timers
+          # Install/Update system-wide systemd unit and timers on primary host
           scp -p systemd/publicip.service systemd/publicip.timer \
                  systemd/publicip-collect.service systemd/publicip-collect.timer \
                  systemd/publicip-sync.service systemd/publicip-sync.timer \
@@ -86,24 +90,33 @@ pipeline {
       }
     }
 
-    stage('Deploy dbtool') {
-      matrix {
-        axes {
-          axis {
-            name 'DBTOOL_HOST'
-            values 'crash', 'brain', 'pinky'
+    stage('Deploy cf-cli') {
+      steps {
+        script {
+          def cfHosts = INSTALL_TARGETS['cloudflare-backup'] ?: []
+          for (host in cfHosts) {
+            sh """
+              set -euo pipefail
+              ssh ${DEPLOY_USER}@${host} "sudo mkdir -p /opt/cli-things/bin"
+              scp -p ${CF_BUILD_OUT} ${DEPLOY_USER}@${host}:/opt/cli-things/bin/cloudflare-backup
+              ssh ${DEPLOY_USER}@${host} "sudo chmod +x /opt/cli-things/bin/cloudflare-backup"
+            """
           }
         }
-        stages {
-          stage('Push dbtool') {
-            steps {
-              sh '''
-                set -euo pipefail
-                ssh ${DEPLOY_USER}@${DBTOOL_HOST} "sudo mkdir -p /usr/local/bin"
-                scp -p ${DBTOOL_BUILD_OUT} ${DEPLOY_USER}@${DBTOOL_HOST}:/tmp/dbtool
-                ssh ${DEPLOY_USER}@${DBTOOL_HOST} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
-              '''
-            }
+      }
+    }
+
+    stage('Deploy dbtool') {
+      steps {
+        script {
+          def dbtoolHosts = INSTALL_TARGETS['dbtool'] ?: []
+          for (host in dbtoolHosts) {
+            sh """
+              set -euo pipefail
+              ssh ${DEPLOY_USER}@${host} "sudo mkdir -p /usr/local/bin"
+              scp -p ${DBTOOL_BUILD_OUT} ${DEPLOY_USER}@${host}:/tmp/dbtool
+              ssh ${DEPLOY_USER}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
+            """
           }
         }
       }

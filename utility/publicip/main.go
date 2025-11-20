@@ -396,8 +396,14 @@ func main() {
 		}
 		dbCtx, cancelDB := context.WithTimeout(context.Background(), dbTimeout)
 		defer cancelDB()
-		// shared migrations (filesystem-based)
-		_ = dbconf.ApplyMigrationsFromDir(dbCtx, dbname, "./migrations")
+		// Run shared SQL migrations (if any). This uses the configured
+		// DB_MIGRATIONS_DIR / MIGRATIONS_DIR when set, falling back to
+		// ./migrations by default. If migrations fail, abort early so we
+		// don't continue with missing tables.
+		if err := dbconf.ApplyConfiguredMigrations(dbCtx, dbname); err != nil {
+			fmt.Fprintln(os.Stderr, "db error: migrations failed:", err)
+			os.Exit(1)
+		}
 	}
 
 	if initDNSTargets {
