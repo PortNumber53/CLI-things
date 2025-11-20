@@ -1,6 +1,11 @@
 def INSTALL_TARGETS = [
-  'dbtool'          : ['brain', 'crash', 'pinky', 'zenbook'],
+  'dbtool'           : ['brain', 'crash', 'pinky', 'zenbook'],
   'cloudflare-backup': ['crash'],
+]
+
+// Optional per-host SSH port overrides (defaults to 22 when not specified)
+def HOST_SSH_PORTS = [
+  'zenbook': '22070',
 ]
 
 pipeline {
@@ -95,11 +100,12 @@ pipeline {
         script {
           def cfHosts = INSTALL_TARGETS['cloudflare-backup'] ?: []
           for (host in cfHosts) {
+            def port = HOST_SSH_PORTS[host] ?: '22'
             sh """
               set -euo pipefail
-              ssh ${DEPLOY_USER}@${host} "sudo mkdir -p /opt/cli-things/bin"
-              scp -p ${CF_BUILD_OUT} ${DEPLOY_USER}@${host}:/opt/cli-things/bin/cloudflare-backup
-              ssh ${DEPLOY_USER}@${host} "sudo chmod +x /opt/cli-things/bin/cloudflare-backup"
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mkdir -p /opt/cli-things/bin"
+              scp -P ${port} -p ${CF_BUILD_OUT} ${DEPLOY_USER}@${host}:/opt/cli-things/bin/cloudflare-backup
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo chmod +x /opt/cli-things/bin/cloudflare-backup"
             """
           }
         }
@@ -111,11 +117,12 @@ pipeline {
         script {
           def dbtoolHosts = INSTALL_TARGETS['dbtool'] ?: []
           for (host in dbtoolHosts) {
+            def port = HOST_SSH_PORTS[host] ?: '22'
             sh """
               set -euo pipefail
-              ssh ${DEPLOY_USER}@${host} "sudo mkdir -p /usr/local/bin"
-              scp -p ${DBTOOL_BUILD_OUT} ${DEPLOY_USER}@${host}:/tmp/dbtool
-              ssh ${DEPLOY_USER}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mkdir -p /usr/local/bin"
+              scp -P ${port} -p ${DBTOOL_BUILD_OUT} ${DEPLOY_USER}@${host}:/tmp/dbtool
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
             """
           }
         }
