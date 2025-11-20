@@ -5,6 +5,8 @@ def INSTALL_TARGETS = [
 
 // Optional per-host SSH port overrides (defaults to 22 when not specified)
 def HOST_SSH_PORTS = [
+  'brain' : '22040',
+  'pinky' : '22050',
   'zenbook': '22070',
 ]
 
