@@ -592,10 +592,22 @@ func writeIntrospectedSchema(sourceDSN, prePath, postPath string, excludeSchemaR
 		post.WriteString("-- set sequences to max(column) after data copy\n")
 		for _, sr := range seqRefs {
 			seqLit := regclassLiteral(sr.seqSchema, sr.seqName)
-			post.WriteString(
-				"SELECT pg_catalog.setval(" + seqLit +
-					", COALESCE((SELECT MAX(" + quoteIdent(sr.colName) + ") FROM " + quoteIdent(sr.tSchema) + "." + quoteIdent(sr.tName) + "), 0), true);\n",
-			)
+			// Avoid setval(0, ...) for sequences with min_value=1 by using pg_sequence.min_value when the table is empty.
+			// If table is non-empty, set to MAX(col) and mark is_called=true so nextval returns MAX+1.
+			post.WriteString("WITH seq AS (\n")
+			post.WriteString("  SELECT s.min_value\n")
+			post.WriteString("    FROM pg_sequence s\n")
+			post.WriteString("    JOIN pg_class c ON c.oid = s.seqrelid\n")
+			post.WriteString("    JOIN pg_namespace n ON n.oid = c.relnamespace\n")
+			post.WriteString("   WHERE n.nspname = '" + strings.ReplaceAll(sr.seqSchema, "'", "''") + "'\n")
+			post.WriteString("     AND c.relname = '" + strings.ReplaceAll(sr.seqName, "'", "''") + "'\n")
+			post.WriteString("), mx AS (\n")
+			post.WriteString("  SELECT MAX(" + quoteIdent(sr.colName) + ") AS m FROM " + quoteIdent(sr.tSchema) + "." + quoteIdent(sr.tName) + "\n")
+			post.WriteString(")\n")
+			post.WriteString("SELECT pg_catalog.setval(" + seqLit + ",\n")
+			post.WriteString("  CASE WHEN mx.m IS NULL THEN seq.min_value ELSE GREATEST(mx.m, seq.min_value) END,\n")
+			post.WriteString("  (mx.m IS NOT NULL)\n")
+			post.WriteString(") FROM seq, mx;\n")
 			post.WriteString(
 				"ALTER SEQUENCE " + quoteIdent(sr.seqSchema) + "." + quoteIdent(sr.seqName) +
 					" OWNED BY " + quoteIdent(sr.tSchema) + "." + quoteIdent(sr.tName) + "." + quoteIdent(sr.colName) + ";\n",
