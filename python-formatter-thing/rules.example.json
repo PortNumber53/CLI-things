@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "PYFMT001",
+      "enabled": true,
+      "severity": "error",
+      "description": "Import statements within functions/methods are not allowed and must be moved to the top of the file, except when inside a try/except/finally block.",
+      "match": {
+        "context": {
+          "in_function": true,
+          "not_in_blocks": ["try", "except", "finally"]
+        },
+        "statement_token_regex": "(^| )NAME:(import|from)( |$)"
+      },
+      "autofix": {
+        "action": "move_imports_to_top",
+        "dedupe": true
+      }
+    }
+  ]
+}
+
+

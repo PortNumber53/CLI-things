@@ -33,3 +33,26 @@ go.work.sum
 
 # build outputs
 bin/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+ENV/
+
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+
+dist/
+build/
+*.egg-info/
+
+.coverage
+coverage.xml
+
+uv.lock
