@@ -28,13 +28,31 @@ type targetConfig struct {
 	SSLMode     string
 }
 
+type schemaMode string
+
+const (
+	schemaAuto       schemaMode = "auto"
+	schemaPgDump     schemaMode = "pg_dump"
+	schemaIntrospect schemaMode = "introspect"
+)
+
+type dataMode string
+
+const (
+	dataNone dataMode = "none"
+	dataCopy dataMode = "copy"
+)
+
 func main() {
 	var (
 		inputFile     = flag.String("input", "", "Path to a text file containing Xata Postgres DSNs (one per line)")
 		dumpDir       = flag.String("dump-dir", "./xata2pg-dumps", "Directory to write SQL dump files")
 		includeBranch = flag.Bool("include-branch", true, "Include :branch in target DB name (as __branch)")
 		dropExisting  = flag.Bool("drop-existing", false, "Drop target DBs before recreating them")
-		schemaOnly    = flag.Bool("schema-only", false, "Dump schema only (no data)")
+		schemaOnly    = flag.Bool("schema-only", false, "DEPRECATED: use --data=none (kept for compatibility)")
+		schemaSrc     = flag.String("schema", "auto", "Schema strategy: auto|pg_dump|introspect (auto tries pg_dump pre/post, falls back to introspection)")
+		dataSrc       = flag.String("data", "copy", "Data strategy: copy|none (copy streams table data via psql COPY)")
+		excludeSchema = flag.String("exclude-schema-regex", "", "Optional regex of schema names to exclude from introspection-based migration")
 		verbose       = flag.Bool("v", false, "Verbose logging")
 	)
 	flag.Parse()
@@ -81,6 +99,29 @@ func main() {
 	}
 	defer adminDB.Close()
 
+	sm := schemaMode(*schemaSrc)
+	if sm != schemaAuto && sm != schemaPgDump && sm != schemaIntrospect {
+		fmt.Fprintln(os.Stderr, "invalid --schema; must be auto|pg_dump|introspect")
+		os.Exit(2)
+	}
+	dm := dataMode(*dataSrc)
+	if dm != dataCopy && dm != dataNone {
+		fmt.Fprintln(os.Stderr, "invalid --data; must be copy|none")
+		os.Exit(2)
+	}
+	if *schemaOnly {
+		dm = dataNone
+	}
+	var excludeSchemaRe *regexp.Regexp
+	if strings.TrimSpace(*excludeSchema) != "" {
+		rx, err := regexp.Compile(*excludeSchema)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "invalid --exclude-schema-regex:", err)
+			os.Exit(2)
+		}
+		excludeSchemaRe = rx
+	}
+
 	for _, src := range lines {
 		srcInfo, err := parseSourceDSN(src)
 		if err != nil {
@@ -89,17 +130,10 @@ func main() {
 		}
 
 		targetDBName := buildTargetDBName(srcInfo.db, srcInfo.branch, *includeBranch)
-		dumpPath := filepath.Join(*dumpDir, targetDBName+".sql")
 
 		if *verbose {
 			fmt.Fprintf(os.Stderr, "source: %s -> target db: %s\n", redactDSN(src), targetDBName)
-			fmt.Fprintf(os.Stderr, "dump: %s\n", dumpPath)
-		}
-
-		if err := runPgDump(src, dumpPath, *schemaOnly, *verbose); err != nil {
-			maybeDiagnosePgDumpError(src, err, *verbose)
-			fmt.Fprintf(os.Stderr, "pg_dump failed for %s: %v\n", redactDSN(src), err)
-			os.Exit(1)
+			fmt.Fprintf(os.Stderr, "dump dir: %s\n", *dumpDir)
 		}
 
 		if err := ensureDatabase(adminDB, targetDBName, *dropExisting, *verbose); err != nil {
@@ -113,13 +147,77 @@ func main() {
 			os.Exit(2)
 		}
 
-		if err := runPsqlFile(targetDSN, dumpPath, *verbose); err != nil {
-			fmt.Fprintf(os.Stderr, "restore failed for %q: %v\n", targetDBName, err)
+		// 1) Apply schema (pre-data), 2) copy data table-by-table, 3) apply schema (post-data).
+		if err := migrateOne(src, targetDSN, filepath.Join(*dumpDir, targetDBName), sm, dm, excludeSchemaRe, *verbose); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate failed for %s -> %s: %v\n", srcInfo.fullName(), targetDBName, err)
 			os.Exit(1)
 		}
 
 		fmt.Printf("ok: %s -> %s\n", srcInfo.fullName(), targetDBName)
 	}
+}
+
+func migrateOne(sourceDSN, targetDSN, dumpBasePath string, sm schemaMode, dm dataMode, excludeSchemaRe *regexp.Regexp, verbose bool) error {
+	// dumpBasePath is a prefix; we write <prefix>.pre.sql and <prefix>.post.sql
+	prePath := dumpBasePath + ".pre.sql"
+	postPath := dumpBasePath + ".post.sql"
+
+	// Schema phase (pre/post)
+	switch sm {
+	case schemaPgDump, schemaAuto:
+		if verbose {
+			fmt.Fprintf(os.Stderr, "schema(pg_dump): writing %s and %s\n", prePath, postPath)
+		}
+		if err := runPgDumpSection(sourceDSN, prePath, "pre-data", verbose); err != nil {
+			maybeDiagnosePgDumpError(sourceDSN, err, verbose)
+			if sm == schemaPgDump {
+				return fmt.Errorf("pg_dump pre-data failed: %w", err)
+			}
+			if verbose {
+				fmt.Fprintln(os.Stderr, "schema(pg_dump) failed; falling back to introspection")
+			}
+			if err2 := writeIntrospectedSchema(sourceDSN, prePath, postPath, excludeSchemaRe, verbose); err2 != nil {
+				return fmt.Errorf("schema introspection fallback failed: %w (original pg_dump error: %v)", err2, err)
+			}
+			break
+		}
+		if err := runPgDumpSection(sourceDSN, postPath, "post-data", verbose); err != nil {
+			maybeDiagnosePgDumpError(sourceDSN, err, verbose)
+			if sm == schemaPgDump {
+				return fmt.Errorf("pg_dump post-data failed: %w", err)
+			}
+			if verbose {
+				fmt.Fprintln(os.Stderr, "schema(pg_dump post-data) failed; falling back to introspection")
+			}
+			if err2 := writeIntrospectedSchema(sourceDSN, prePath, postPath, excludeSchemaRe, verbose); err2 != nil {
+				return fmt.Errorf("schema introspection fallback failed: %w (original pg_dump error: %v)", err2, err)
+			}
+		}
+	case schemaIntrospect:
+		if err := writeIntrospectedSchema(sourceDSN, prePath, postPath, excludeSchemaRe, verbose); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown schema mode %q", sm)
+	}
+
+	// Apply pre-data schema
+	if err := runPsqlFile(targetDSN, prePath, verbose); err != nil {
+		return fmt.Errorf("apply pre-data schema failed: %w", err)
+	}
+
+	// Data phase
+	if dm == dataCopy {
+		if err := copyAllTables(sourceDSN, targetDSN, excludeSchemaRe, verbose); err != nil {
+			return fmt.Errorf("data copy failed: %w", err)
+		}
+	}
+
+	// Apply post-data schema (constraints, indexes, etc)
+	if err := runPsqlFile(targetDSN, postPath, verbose); err != nil {
+		return fmt.Errorf("apply post-data schema failed: %w", err)
+	}
+	return nil
 }
 
 type sourceInfo struct {
@@ -224,7 +322,7 @@ func ensureDatabase(admin *sql.DB, dbname string, dropExisting bool, verbose boo
 	return err
 }
 
-func runPgDump(sourceDSN, outPath string, schemaOnly bool, verbose bool) error {
+func runPgDumpSection(sourceDSN, outPath string, section string, verbose bool) error {
 	if _, err := exec.LookPath("pg_dump"); err != nil {
 		return fmt.Errorf("pg_dump not found on PATH")
 	}
@@ -235,15 +333,14 @@ func runPgDump(sourceDSN, outPath string, schemaOnly bool, verbose bool) error {
 		"--no-acl",
 		"--no-comments",
 		"--no-security-labels",
+		"--section", section,
 		"--file", outPath,
 	}
-	if schemaOnly {
-		args = append(args, "--schema-only")
-	}
+	// Intentionally no data. These sections contain only schema.
 	cmd := exec.Command("pg_dump", args...)
 	// Avoid leaking credentials by not echoing command; only show redacted DSN.
 	if verbose {
-		fmt.Fprintf(os.Stderr, "pg_dump: %s -> %s\n", redactDSN(sourceDSN), outPath)
+		fmt.Fprintf(os.Stderr, "pg_dump(%s): %s -> %s\n", section, redactDSN(sourceDSN), outPath)
 	}
 	cmd.Stdout = os.Stdout
 	var stderr bytes.Buffer
@@ -270,7 +367,7 @@ func runPsqlFile(targetDSN, sqlFile string, verbose bool) error {
 	if _, err := exec.LookPath("psql"); err != nil {
 		return fmt.Errorf("psql not found on PATH")
 	}
-	args := []string{"-d", targetDSN, "-v", "ON_ERROR_STOP=1", "-f", sqlFile}
+	args := []string{"-X", "-q", "-d", targetDSN, "-v", "ON_ERROR_STOP=1", "-f", sqlFile}
 	cmd := exec.Command("psql", args...)
 	if verbose {
 		fmt.Fprintf(os.Stderr, "psql: restoring into %s from %s\n", redactDSN(targetDSN), sqlFile)
@@ -278,6 +375,260 @@ func runPsqlFile(targetDSN, sqlFile string, verbose bool) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func copyAllTables(sourceDSN, targetDSN string, excludeSchemaRe *regexp.Regexp, verbose bool) error {
+	srcDB, err := sql.Open("postgres", sourceDSN)
+	if err != nil {
+		return err
+	}
+	defer srcDB.Close()
+
+	tables, err := listBaseTables(srcDB, excludeSchemaRe)
+	if err != nil {
+		return err
+	}
+	for _, t := range tables {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "copy: %s.%s\n", t.schema, t.name)
+		}
+		if err := streamCopyTable(sourceDSN, targetDSN, t.schema, t.name); err != nil {
+			return fmt.Errorf("copy %s.%s failed: %w", t.schema, t.name, err)
+		}
+	}
+	return nil
+}
+
+type tableRef struct {
+	schema string
+	name   string
+}
+
+func listBaseTables(db *sql.DB, excludeSchemaRe *regexp.Regexp) ([]tableRef, error) {
+	rows, err := db.Query(
+		`select table_schema::text, table_name::text
+		   from information_schema.tables
+		  where table_type = 'BASE TABLE'
+		    and table_schema not in ('pg_catalog','information_schema')
+		  order by 1,2`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []tableRef
+	for rows.Next() {
+		var s, n string
+		if err := rows.Scan(&s, &n); err != nil {
+			return nil, err
+		}
+		if excludeSchemaRe != nil && excludeSchemaRe.MatchString(s) {
+			continue
+		}
+		out = append(out, tableRef{schema: s, name: n})
+	}
+	return out, rows.Err()
+}
+
+func streamCopyTable(sourceDSN, targetDSN, schema, table string) error {
+	if _, err := exec.LookPath("psql"); err != nil {
+		return fmt.Errorf("psql not found on PATH")
+	}
+	fq := quoteIdent(schema) + "." + quoteIdent(table)
+	srcSQL := fmt.Sprintf("COPY %s TO STDOUT WITH (FORMAT binary)", fq)
+	dstSQL := fmt.Sprintf("COPY %s FROM STDIN WITH (FORMAT binary)", fq)
+
+	srcCmd := exec.Command("psql", "-X", "-q", "-d", sourceDSN, "-v", "ON_ERROR_STOP=1", "-c", srcSQL)
+	dstCmd := exec.Command("psql", "-X", "-q", "-d", targetDSN, "-v", "ON_ERROR_STOP=1", "-c", dstSQL)
+
+	// Pipe src stdout into dst stdin
+	pr, pw := io.Pipe()
+	srcCmd.Stdout = pw
+	srcCmd.Stderr = os.Stderr
+	dstCmd.Stdin = pr
+	dstCmd.Stdout = os.Stdout
+	dstCmd.Stderr = os.Stderr
+
+	// Start destination first (ready to read), then start source.
+	if err := dstCmd.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return err
+	}
+	if err := srcCmd.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		_ = dstCmd.Wait()
+		return err
+	}
+
+	srcErr := srcCmd.Wait()
+	_ = pw.Close()
+	dstErr := dstCmd.Wait()
+	_ = pr.Close()
+
+	if srcErr != nil {
+		return fmt.Errorf("source COPY failed: %w", srcErr)
+	}
+	if dstErr != nil {
+		return fmt.Errorf("target COPY failed: %w", dstErr)
+	}
+	return nil
+}
+
+func writeIntrospectedSchema(sourceDSN, prePath, postPath string, excludeSchemaRe *regexp.Regexp, verbose bool) error {
+	srcDB, err := sql.Open("postgres", sourceDSN)
+	if err != nil {
+		return err
+	}
+	defer srcDB.Close()
+
+	tables, err := listBaseTables(srcDB, excludeSchemaRe)
+	if err != nil {
+		return err
+	}
+	schemas := map[string]struct{}{}
+	for _, t := range tables {
+		schemas[t.schema] = struct{}{}
+	}
+
+	var pre bytes.Buffer
+	var post bytes.Buffer
+	pre.WriteString("-- generated by xata2pg (introspect)\n")
+	post.WriteString("-- generated by xata2pg (introspect)\n")
+	for s := range schemas {
+		pre.WriteString("CREATE SCHEMA IF NOT EXISTS " + quoteIdent(s) + ";\n")
+	}
+	pre.WriteString("\n")
+
+	for _, t := range tables {
+		cols, err := loadTableColumns(srcDB, t.schema, t.name)
+		if err != nil {
+			return fmt.Errorf("introspect columns %s.%s: %w", t.schema, t.name, err)
+		}
+		pre.WriteString("CREATE TABLE IF NOT EXISTS " + quoteIdent(t.schema) + "." + quoteIdent(t.name) + " (\n")
+		for i, c := range cols {
+			line := "  " + quoteIdent(c.name) + " " + c.typ
+			if c.def != "" {
+				line += " DEFAULT " + c.def
+			}
+			if c.notNull {
+				line += " NOT NULL"
+			}
+			if i < len(cols)-1 {
+				line += ","
+			}
+			line += "\n"
+			pre.WriteString(line)
+		}
+		pre.WriteString(");\n\n")
+
+		// Constraints and indexes in post phase
+		if err := appendConstraintsAndIndexes(&post, srcDB, t.schema, t.name); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "xata2pg: warn: skipping some post-data DDL for %s.%s: %v\n", t.schema, t.name, err)
+			}
+		}
+	}
+
+	if err := os.WriteFile(prePath, pre.Bytes(), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(postPath, post.Bytes(), 0o644); err != nil {
+		return err
+	}
+	return nil
+}
+
+type columnInfo struct {
+	name    string
+	typ     string
+	notNull bool
+	def     string
+}
+
+func loadTableColumns(db *sql.DB, schema, table string) ([]columnInfo, error) {
+	rows, err := db.Query(
+		`select a.attname::text,
+		        format_type(a.atttypid, a.atttypmod)::text,
+		        a.attnotnull,
+		        coalesce(pg_get_expr(ad.adbin, ad.adrelid), '')::text
+		   from pg_attribute a
+		   join pg_class c on c.oid = a.attrelid
+		   join pg_namespace n on n.oid = c.relnamespace
+		   left join pg_attrdef ad on ad.adrelid = a.attrelid and ad.adnum = a.attnum
+		  where n.nspname = $1
+		    and c.relname = $2
+		    and a.attnum > 0
+		    and not a.attisdropped
+		  order by a.attnum`,
+		schema, table,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []columnInfo
+	for rows.Next() {
+		var c columnInfo
+		if err := rows.Scan(&c.name, &c.typ, &c.notNull, &c.def); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func appendConstraintsAndIndexes(w io.StringWriter, db *sql.DB, schema, table string) error {
+	// Constraints
+	rows, err := db.Query(
+		`select conname::text, contype::text, pg_get_constraintdef(oid, true)::text
+		   from pg_constraint
+		   join pg_class c on c.oid = conrelid
+		   join pg_namespace n on n.oid = c.relnamespace
+		  where n.nspname = $1 and c.relname = $2 and contype in ('p','u','f','c')
+		  order by contype, conname`,
+		schema, table,
+	)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name, typ, def string
+		if err := rows.Scan(&name, &typ, &def); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		stmt := "ALTER TABLE " + quoteIdent(schema) + "." + quoteIdent(table) +
+			" ADD CONSTRAINT " + quoteIdent(name) + " " + def + ";\n"
+		_, _ = w.WriteString(stmt)
+	}
+	_ = rows.Close()
+
+	// Indexes (excluding primary key index)
+	idxRows, err := db.Query(
+		`select pg_get_indexdef(i.indexrelid)::text
+		   from pg_index i
+		   join pg_class t on t.oid = i.indrelid
+		   join pg_namespace n on n.oid = t.relnamespace
+		  where n.nspname = $1 and t.relname = $2 and not i.indisprimary
+		  order by 1`,
+		schema, table,
+	)
+	if err != nil {
+		return err
+	}
+	for idxRows.Next() {
+		var def string
+		if err := idxRows.Scan(&def); err != nil {
+			_ = idxRows.Close()
+			return err
+		}
+		_, _ = w.WriteString(def + ";\n")
+	}
+	_ = idxRows.Close()
+	_, _ = w.WriteString("\n")
+	return nil
 }
 
 var reMissingRoleOID = regexp.MustCompile(`role with OID (\d+) does not exist`)
