@@ -2,6 +2,7 @@
 /cli-things
 /dbtool
 .gocache/
+.gomodcache/
 
 
 # If you prefer the allow list template instead of the deny list, see community template:
@@ -56,3 +57,7 @@ build/
 coverage.xml
 
 uv.lock
+
+# xata2pg local artifacts (can contain secrets)
+xata-dsns*.txt
+xata2pg-dumps/
