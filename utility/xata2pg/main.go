@@ -398,16 +398,93 @@ func diagnoseMissingRoleOID(sourceDSN string, oid int64, verbose bool) {
 			}
 			parts := make([]string, 0, len(cols))
 			for i, c := range cols {
-				parts = append(parts, fmt.Sprintf("%s=%v", c, vals[i]))
+				parts = append(parts, fmt.Sprintf("%s=%s", c, formatSQLValue(vals[i])))
 			}
 			fmt.Fprintln(os.Stderr, "  -", strings.Join(parts, " "))
 		}
 		_ = rows.Close()
 	}
 
+	// Focused probes for the specific OID (more actionable for support tickets).
+	printOwnerObjects(db, oid, verbose)
+
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "xata2pg: note: this usually indicates the source Postgres endpoint references internal/hidden roles.")
 	fmt.Fprintln(os.Stderr, "xata2pg: if pg_dump cannot resolve the role OID, you may need Xata support to fix the catalog/view, or use a non-pg_dump export path.")
+}
+
+func formatSQLValue(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "NULL"
+	case []byte:
+		// database/sql + lib/pq commonly scan text-ish columns into []byte.
+		return string(x)
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+func printOwnerObjects(db *sql.DB, oid int64, verbose bool) {
+	type q struct {
+		name string
+		sql  string
+	}
+	qs := []q{
+		{
+			name: "Objects in pg_class with relowner = missing OID",
+			sql:  `select n.nspname::text as schema, c.relname::text as name, c.relkind::text as kind, c.relowner::bigint as owner_oid from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relowner = $1 order by 1,2 limit 100`,
+		},
+		{
+			name: "Objects in pg_type with typowner = missing OID",
+			sql:  `select n.nspname::text as schema, t.typname::text as name, t.typtype::text as typtype, t.typowner::bigint as owner_oid from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typowner = $1 order by 1,2 limit 100`,
+		},
+		{
+			name: "Databases with datdba = missing OID",
+			sql:  `select datname::text as database, datdba::bigint as owner_oid from pg_database where datdba = $1 order by 1 limit 100`,
+		},
+		{
+			name: "Schemas with nspowner = missing OID",
+			sql:  `select nspname::text as schema, nspowner::bigint as owner_oid from pg_namespace where nspowner = $1 order by 1 limit 100`,
+		},
+	}
+
+	for _, item := range qs {
+		rows, err := db.Query(item.sql, oid)
+		if err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "xata2pg: focused probe failed (%s): %v\n", item.name, err)
+			}
+			continue
+		}
+		cols, _ := rows.Columns()
+		count := 0
+		var lines []string
+		for rows.Next() {
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				continue
+			}
+			parts := make([]string, 0, len(cols))
+			for i, c := range cols {
+				parts = append(parts, fmt.Sprintf("%s=%s", c, formatSQLValue(vals[i])))
+			}
+			lines = append(lines, "  - "+strings.Join(parts, " "))
+			count++
+		}
+		_ = rows.Close()
+		if count == 0 {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "xata2pg: %s (%d)\n", item.name, count)
+		for _, ln := range lines {
+			fmt.Fprintln(os.Stderr, ln)
+		}
+	}
 }
 
 func readDSNLines(path string) ([]string, error) {
