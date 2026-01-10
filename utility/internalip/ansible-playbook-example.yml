@@ -1,0 +1,40 @@
+---
+- name: Capture and update internal IPs for laptops
+  hosts: localhost
+  gather_facts: true
+
+  tasks:
+    - name: Capture internal IP information
+      command: go run utility/internalip/main.go -all -json
+      args:
+        chdir: "{{ playbook_dir }}"
+      register: internal_ip_result
+      changed_when: false
+
+    - name: Parse internal IP data
+      set_fact:
+        internal_ip_data: "{{ internal_ip_result.stdout | from_json }}"
+
+    - name: Display captured IP information
+      debug:
+        msg: "Device: {{ internal_ip_data.device.hostname }}, IPs: {{ internal_ip_data.ips | map(attribute='ip') | join(', ') }}"
+
+    - name: Create dynamic inventory file
+      template:
+        src: inventory.j2
+        dest: "{{ playbook_dir }}/dynamic_inventory.yml"
+        mode: '0644'
+      vars:
+        device_data: "{{ internal_ip_data }}"
+
+    - name: Store IP data in database
+      command: go run utility/internalip/main.go -all -store
+      args:
+        chdir: "{{ playbook_dir }}"
+      when: internal_ip_data.ips | length > 0
+      register: store_result
+
+    - name: Display storage result
+      debug:
+        msg: "IP data stored successfully"
+      when: store_result.rc == 0

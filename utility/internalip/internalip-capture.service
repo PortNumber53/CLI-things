@@ -1,0 +1,22 @@
+[Unit]
+Description=Capture Internal IP Address
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cli-things/bin/internalip -store
+User=grimlock
+Group=grimlock
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Only run if network is available
+ExecStartPre=/bin/sh -c 'test -n "$(ip route show default)"'
+
+[Install]
+WantedBy=multi-user.target

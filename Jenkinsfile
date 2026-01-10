@@ -1,6 +1,7 @@
 def INSTALL_TARGETS = [
   'dbtool'           : ['brain', 'crash', 'pinky', 'zenbook'],
   'cloudflare-backup': ['crash'],
+  'internalip'       : ['brain', 'crash', 'pinky', 'zenbook'],
 ]
 
 // Optional per-host SSH port overrides (defaults to 22 when not specified)
@@ -30,6 +31,11 @@ pipeline {
 
     DBTOOL_BUILD_DIR = 'utility/dbtool'
     DBTOOL_BUILD_OUT = 'bin/dbtool'
+
+    INTERNALIP_BINARY_NAME = 'internalip'
+    INTERNALIP_BUILD_DIR   = 'utility/internalip'
+    INTERNALIP_BUILD_OUT   = 'bin/internalip'
+
     DEPLOY_HOST = 'crash'
     DEPLOY_USER = 'grimlock'
     DEPLOY_PATH = '/opt/cli-things/bin/publicip'
@@ -48,11 +54,13 @@ pipeline {
         sh 'go mod download'
         sh 'go build -o ${BUILD_OUT} ./${BUILD_DIR}'
         sh 'go build -o ${CF_BUILD_OUT} ./${CF_BUILD_DIR}'
+        sh 'go build -o ${INTERNALIP_BUILD_OUT} ./${INTERNALIP_BUILD_DIR}'
         // Build dbtool using its dedicated main with the dbtool build tag,
         // so we get an executable binary (not a package archive).
         sh 'go build -tags dbtool -o ${DBTOOL_BUILD_OUT} ./dbtool.go'
         sh 'file ${BUILD_OUT} || true'
         sh 'file ${CF_BUILD_OUT} || true'
+        sh 'file ${INTERNALIP_BUILD_OUT} || true'
         sh 'file ${DBTOOL_BUILD_OUT} || true'
       }
     }
@@ -65,14 +73,18 @@ pipeline {
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p $(dirname ${DEPLOY_PATH}) && sudo chown ${DEPLOY_USER} $(dirname ${DEPLOY_PATH})"
           # Copy the publicip binary
           scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
+          # Copy the internalip binary
+          scp -p ${INTERNALIP_BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/cli-things/bin/internalip
           # Ensure executable bit set
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x /opt/cli-things/bin/internalip"
           # Install/Update system-wide systemd unit and timers on primary host
           scp -p systemd/publicip.service systemd/publicip.timer \
                  systemd/publicip-collect.service systemd/publicip-collect.timer \
                  systemd/publicip-sync.service systemd/publicip-sync.timer \
                  systemd/cloudflare-backup.service systemd/cloudflare-backup.timer \
                  systemd/cloudflare-backup.conf.sample \
+                 utility/internalip/internalip-capture.service utility/internalip/internalip-capture.timer \
                  ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && \
                                              sudo mv /tmp/publicip.timer /etc/systemd/system/publicip.timer && \
@@ -81,7 +93,9 @@ pipeline {
                                              sudo mv /tmp/publicip-sync.service /etc/systemd/system/publicip-sync.service && \
                                              sudo mv /tmp/publicip-sync.timer /etc/systemd/system/publicip-sync.timer && \
                                              sudo mv /tmp/cloudflare-backup.service /etc/systemd/system/cloudflare-backup.service && \
-                                             sudo mv /tmp/cloudflare-backup.timer /etc/systemd/system/cloudflare-backup.timer"
+                                             sudo mv /tmp/cloudflare-backup.timer /etc/systemd/system/cloudflare-backup.timer && \
+                                             sudo mv /tmp/internalip-capture.service /etc/systemd/system/internalip-capture.service && \
+                                             sudo mv /tmp/internalip-capture.timer /etc/systemd/system/internalip-capture.timer"
           # Ensure environment directory exists and seed env file if absent
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things && sudo mkdir -p /etc/cloudflare-backup"
           scp -p systemd/publicip.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/publicip.conf.sample
@@ -92,7 +106,7 @@ pipeline {
           # Run one of the utilities once so shared DB migrations are applied
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "/opt/cli-things/bin/cloudflare-backup --timeout=10s || true"
           # Enable and start the timers (system-wide)
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer cloudflare-backup.timer"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer cloudflare-backup.timer internalip-capture.timer"
           # Optionally start the service immediately once
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl start publicip.service || true"
         '''
@@ -132,6 +146,29 @@ pipeline {
         }
       }
     }
+
+    stage('Deploy internalip') {
+      steps {
+        script {
+          def internalipHosts = INSTALL_TARGETS['internalip'] ?: []
+          for (host in internalipHosts) {
+            def port = HOST_SSH_PORTS[host] ?: '22'
+            sh """
+              set -euo pipefail
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mkdir -p /opt/cli-things/bin"
+              scp -P ${port} -p ${INTERNALIP_BUILD_OUT} ${DEPLOY_USER}@${host}:/opt/cli-things/bin/internalip
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo chmod +x /opt/cli-things/bin/internalip"
+              # Install systemd service and timer for internal IP capture
+              scp -P ${port} -p utility/internalip/internalip-capture.service utility/internalip/internalip-capture.timer ${DEPLOY_USER}@${host}:/tmp/
+              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mv /tmp/internalip-capture.service /etc/systemd/system/internalip-capture.service && \
+                                                     sudo mv /tmp/internalip-capture.timer /etc/systemd/system/internalip-capture.timer && \
+                                                     sudo systemctl daemon-reload && \
+                                                     sudo systemctl enable --now internalip-capture.timer"
+            """
+          }
+        }
+      }
+    }
   }
 
   post {
@@ -142,7 +179,7 @@ pipeline {
       echo 'Deployment failed.'
     }
     always {
-      archiveArtifacts artifacts: 'bin/publicip', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'bin/publicip,bin/internalip', allowEmptyArchive: true
     }
   }
 }

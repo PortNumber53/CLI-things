@@ -1,0 +1,37 @@
+# Dynamic inventory generated from internal IP capture
+# Template for Ansible inventory generation
+
+all:
+  vars:
+    ansible_user: "{{ device_data.device.user | default('ansible') }}"
+    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+  children:
+    laptops:
+      hosts:
+        {{ device_data.device.hostname }}:
+          ansible_host: "{{ device_data.ips[0].ip }}"
+          interfaces: "{{ device_data.ips | items2dict(key_name='interface', value_name='ip') }}"
+          mac_addresses: "{{ device_data.ips | selectattr('mac_address', 'defined') | items2dict(key_name='interface', value_name='mac_address') }}"
+          device_info:
+            os: "{{ device_data.device.os }}"
+            arch: "{{ device_data.device.arch }}"
+            hostname: "{{ device_data.device.hostname }}"
+
+    # Group devices by OS
+    darwin_hosts:
+      hosts:
+        {{ device_data.device.hostname }} if device_data.device.os == 'darwin':
+
+    linux_hosts:
+      hosts:
+        {{ device_data.device.hostname }} if device_data.device.os == 'linux':
+
+    # Group by network interface
+    wifi_devices:
+      hosts:
+        {{ device_data.device.hostname }} if 'wifi' in (device_data.ips | map(attribute='interface') | list) or 'wlan' in (device_data.ips | map(attribute='interface') | list):
+
+    ethernet_devices:
+      hosts:
+        {{ device_data.device.hostname }} if 'eth' in (device_data.ips | map(attribute='interface') | list) or 'en' in (device_data.ips | map(attribute='interface') | list):
