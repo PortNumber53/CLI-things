@@ -49,6 +49,7 @@ func main() {
 		dumpDir       = flag.String("dump-dir", "./xata2pg-dumps", "Directory to write SQL dump files")
 		includeBranch = flag.Bool("include-branch", true, "Include :branch in target DB name (as __branch)")
 		dropExisting  = flag.Bool("drop-existing", false, "Drop target DBs before recreating them")
+		cleanExisting = flag.Bool("clean-existing", true, "If target DB already exists, drop/recreate all non-system schemas before restore/copy (recommended for re-runs)")
 		schemaOnly    = flag.Bool("schema-only", false, "DEPRECATED: use --data=none (kept for compatibility)")
 		schemaSrc     = flag.String("schema", "auto", "Schema strategy: auto|pg_dump|introspect (auto tries pg_dump pre/post, falls back to introspection)")
 		dataSrc       = flag.String("data", "copy", "Data strategy: copy|none (copy streams table data via psql COPY)")
@@ -79,6 +80,14 @@ func main() {
 	}
 	if len(lines) == 0 {
 		fmt.Fprintln(os.Stderr, "no DSNs found in input file")
+		os.Exit(2)
+	}
+
+	// Deduplicate inputs that map to the same target DB name. This avoids double-importing
+	// the same database when multiple API keys/users are present in the DSN list.
+	lines = dedupeByTargetDB(lines, *includeBranch, *verbose)
+	if len(lines) == 0 {
+		fmt.Fprintln(os.Stderr, "no valid DSNs found in input file")
 		os.Exit(2)
 	}
 
@@ -122,10 +131,11 @@ func main() {
 		excludeSchemaRe = rx
 	}
 
+	var failures []string
 	for _, src := range lines {
 		srcInfo, err := parseSourceDSN(src)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "skip invalid DSN %q: %v\n", redactDSN(src), err)
+			failures = append(failures, fmt.Sprintf("invalid DSN %q: %v", redactDSN(src), err))
 			continue
 		}
 
@@ -136,24 +146,45 @@ func main() {
 			fmt.Fprintf(os.Stderr, "dump dir: %s\n", *dumpDir)
 		}
 
-		if err := ensureDatabase(adminDB, targetDBName, *dropExisting, *verbose); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to ensure database %q: %v\n", targetDBName, err)
-			os.Exit(1)
+		existed, err := ensureDatabase(adminDB, targetDBName, *dropExisting, *verbose)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("ensure database %q failed: %v", targetDBName, err))
+			continue
 		}
 
 		targetDSN, err := cfg.dsnFor(targetDBName)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "failed to build target DSN:", err)
-			os.Exit(2)
+			failures = append(failures, fmt.Sprintf("build target DSN for %q failed: %v", targetDBName, err))
+			continue
+		}
+
+		// If we're re-running into an existing database, clean it so we don't hit duplicates
+		// or drift caused by CREATE IF NOT EXISTS.
+		if existed && !*dropExisting && *cleanExisting {
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "cleaning existing target db schemas: %s\n", targetDBName)
+			}
+			if err := cleanTargetDatabase(targetDSN, *verbose); err != nil {
+				failures = append(failures, fmt.Sprintf("clean target database %q failed: %v", targetDBName, err))
+				continue
+			}
 		}
 
 		// 1) Apply schema (pre-data), 2) copy data table-by-table, 3) apply schema (post-data).
 		if err := migrateOne(src, targetDSN, filepath.Join(*dumpDir, targetDBName), sm, dm, excludeSchemaRe, *verbose); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate failed for %s -> %s: %v\n", srcInfo.fullName(), targetDBName, err)
-			os.Exit(1)
+			failures = append(failures, fmt.Sprintf("migrate failed for %s -> %s: %v", srcInfo.fullName(), targetDBName, err))
+			continue
 		}
 
 		fmt.Printf("ok: %s -> %s\n", srcInfo.fullName(), targetDBName)
+	}
+
+	if len(failures) > 0 {
+		fmt.Fprintln(os.Stderr, "xata2pg: completed with failures:")
+		for _, f := range failures {
+			fmt.Fprintln(os.Stderr, " -", f)
+		}
+		os.Exit(1)
 	}
 }
 
@@ -286,7 +317,17 @@ func quoteIdent(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 
-func ensureDatabase(admin *sql.DB, dbname string, dropExisting bool, verbose bool) error {
+func ensureDatabase(admin *sql.DB, dbname string, dropExisting bool, verbose bool) (existedBefore bool, err error) {
+	// Check existence first so callers can decide whether to clean.
+	var exists bool
+	if err := admin.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`,
+		dbname,
+	).Scan(&exists); err != nil {
+		return false, err
+	}
+	existedBefore = exists
+
 	if dropExisting {
 		if verbose {
 			fmt.Fprintf(os.Stderr, "dropping database (if exists): %s\n", dbname)
@@ -297,29 +338,90 @@ func ensureDatabase(admin *sql.DB, dbname string, dropExisting bool, verbose boo
 			dbname,
 		)
 		if _, err := admin.Exec("DROP DATABASE IF EXISTS " + quoteIdent(dbname)); err != nil {
-			return err
+			return existedBefore, err
 		}
+		exists = false
 	}
 
 	// Create if missing.
-	var exists bool
-	if err := admin.QueryRow(
-		`SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`,
-		dbname,
-	).Scan(&exists); err != nil {
-		return err
-	}
 	if exists {
 		if verbose {
 			fmt.Fprintf(os.Stderr, "database exists: %s\n", dbname)
 		}
-		return nil
+		return existedBefore, nil
 	}
 	if verbose {
 		fmt.Fprintf(os.Stderr, "creating database: %s\n", dbname)
 	}
-	_, err := admin.Exec("CREATE DATABASE " + quoteIdent(dbname))
-	return err
+	_, err = admin.Exec("CREATE DATABASE " + quoteIdent(dbname))
+	return existedBefore, err
+}
+
+func cleanTargetDatabase(targetDSN string, verbose bool) error {
+	db, err := sql.Open("postgres", targetDSN)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Drop all user schemas so re-runs are clean and idempotent.
+	// This avoids issues like duplicate PKs on schema_migrations and schema drift from CREATE IF NOT EXISTS.
+	rows, err := db.Query(
+		`select nspname::text
+		   from pg_namespace
+		  where nspname not in ('pg_catalog','information_schema')
+		    and nspname not like 'pg_toast%'
+		    and nspname not like 'pg_temp_%'
+		    and nspname not like 'pg_toast_temp_%'
+		  order by 1`,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var schemas []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return err
+		}
+		schemas = append(schemas, s)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, s := range schemas {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "clean: drop schema %s\n", s)
+		}
+		if _, err := db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s) + " CASCADE"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dedupeByTargetDB(lines []string, includeBranch bool, verbose bool) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, raw := range lines {
+		srcInfo, err := parseSourceDSN(raw)
+		if err != nil {
+			// keep it; main loop will report the error with a redacted DSN
+			out = append(out, raw)
+			continue
+		}
+		target := buildTargetDBName(srcInfo.db, srcInfo.branch, includeBranch)
+		if _, ok := seen[target]; ok {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "xata2pg: skipping duplicate input mapping to target %q: %s\n", target, redactDSN(raw))
+			}
+			continue
+		}
+		seen[target] = struct{}{}
+		out = append(out, raw)
+	}
+	return out
 }
 
 func runPgDumpSection(sourceDSN, outPath string, section string, verbose bool) error {
