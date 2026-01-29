@@ -37,6 +37,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Determine output file path
+	if !isFlagPassed("output") {
+		*outputFilePath = deriveOutputFilename(*envFilePath)
+	}
+
 	fmt.Printf("Reading base config from: %s\n", *envFilePath)
 	if _, err := os.Stat(*localEnvFilePath); err == nil {
 		fmt.Printf("Reading local overrides from: %s\n", *localEnvFilePath)
@@ -162,4 +167,24 @@ func processEnvFile(filePath string, seenKeys map[string]struct{}, outputLines *
 	}
 
 	return nil
+}
+
+// isFlagPassed checks if a flag was passed in the command line arguments
+func isFlagPassed(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+// deriveOutputFilename generates the example filename based on the input filename
+func deriveOutputFilename(envPath string) string {
+	baseName := filepath.Base(envPath)
+	if strings.HasPrefix(baseName, ".") {
+		return "_" + baseName[1:] + ".example"
+	}
+	return "_" + baseName + ".example"
 }

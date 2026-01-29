@@ -1,15 +1,6 @@
 # This is the main database configuration
-DATABASE_URL=<DATABASE_URL_VALUE>
+#DATABASE_URL=postgresql://user:secretpassword@host:port/db
 DATABASE_POOL=<DATABASE_POOL_VALUE>
-
-DB_HOST=<hostname>
-DB_PORT=<port>
-DB_DATABASE=<database name>
-DB_USERNAME=<username>
-DB_PASSWORD=<password to use>
-DB_SSL_MODE=<boolean value>
-
-
 
 # API Keys
 STRIPE_SECRET_KEY=<STRIPE_SECRET_KEY_VALUE>
@@ -19,4 +10,14 @@ SENDGRID_API_KEY=<SENDGRID_API_KEY_VALUE>
 ENABLE_BETA_FEATURE=<ENABLE_BETA_FEATURE_VALUE>
 
 
+
 CLOUDFLARE_API_KEY=<CLOUDFLARE_API_KEY_VALUE>
+
+
+#DATABASE_URL=postgresql://rr8013:xau_jYvouwBJAP9c9FGH6cffknCMFerouJks3@us-east-1.sql.xata.sh/dbsocialmanagerthing:main?sslmode=require
+# DB_HOST=192.168.68.180
+# DB_PORT=57175
+# DB_DATABASE=dbdev_clithings
+# DB_USERNAME=dev_clithings
+# DB_PASSWORD=ZPKwGVK7NtYJ3CqbtGJknwCx54njJ1wu2zqk3Oh6uWqtVNfLTesBtys4DW1XMUT
+# DB_SSL_MODE=disable
