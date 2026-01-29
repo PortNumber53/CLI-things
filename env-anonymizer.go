@@ -13,7 +13,7 @@ import (
 const (
 	defaultEnvFile      = ".env"
 	defaultEnvLocalFile = ".env.local"
-	defaultExampleFile  = ".env.example"
+	defaultExampleFile  = "_env.example"  // Updated prefix to use underscore
 	anonymizedValueTpl  = "<%s_VALUE>" // Template for anonymized value
 	permissionReadWrite = 0644         // Standard file permissions
 )
@@ -31,6 +31,11 @@ func main() {
 	localEnvFilePath := flag.String("local", defaultEnvLocalFile, "Path to the local .env override file")
 	outputFilePath := flag.String("output", defaultExampleFile, "Path for the generated .env.example file")
 	flag.Parse()
+
+	if _, err := os.Stat(*envFilePath); os.IsNotExist(err) {
+		fmt.Println("Base env file not found, skipping generation.")
+		os.Exit(0)
+	}
 
 	fmt.Printf("Reading base config from: %s\n", *envFilePath)
 	if _, err := os.Stat(*localEnvFilePath); err == nil {
