@@ -11,6 +11,8 @@ def HOST_SSH_PORTS = [
   'zenbook': '22070',
 ]
 
+def HOST_SSH_USERS = ['book14': 'mauricio']
+
 pipeline {
   agent any
 
@@ -134,11 +136,12 @@ pipeline {
           def dbtoolHosts = INSTALL_TARGETS['dbtool'] ?: []
           for (host in dbtoolHosts) {
             def port = HOST_SSH_PORTS[host] ?: '22'
+            def user = HOST_SSH_USERS.get(host, 'grimlock')
             sh """
               set -euo pipefail
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mkdir -p /usr/local/bin"
-              scp -P ${port} -p ${DBTOOL_BUILD_OUT} ${DEPLOY_USER}@${host}:/tmp/dbtool
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
+              ssh -p ${port} ${user}@${host} "sudo mkdir -p /usr/local/bin"
+              scp -P ${port} -p ${DBTOOL_BUILD_OUT} ${user}@${host}:/tmp/dbtool
+              ssh -p ${port} ${user}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
             """
           }
         }
