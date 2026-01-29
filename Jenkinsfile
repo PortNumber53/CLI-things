@@ -60,10 +60,12 @@ pipeline {
         // Build dbtool using its dedicated main with the dbtool build tag,
         // so we get an executable binary (not a package archive).
         sh 'go build -tags dbtool -o ${DBTOOL_BUILD_OUT} ./dbtool.go'
+        sh 'GOOS=darwin GOARCH=arm64 go build -tags dbtool -o bin/dbtool-arm64 ./dbtool.go'  // Add arm64 build for Apple Silicon
         sh 'file ${BUILD_OUT} || true'
         sh 'file ${CF_BUILD_OUT} || true'
         sh 'file ${INTERNALIP_BUILD_OUT} || true'
         sh 'file ${DBTOOL_BUILD_OUT} || true'
+        sh 'file bin/dbtool-arm64 || true'
       }
     }
 
@@ -138,11 +140,13 @@ pipeline {
           for (host in dbtoolHosts) {
             def port = HOST_SSH_PORTS[host] ?: '22'
             def user = HOST_SSH_USERS.get(host, 'grimlock')
-            sh """
-              set -euo pipefail
-              ssh -p ${port} ${user}@${host} "sudo mkdir -p /usr/local/bin"
-              scp -P ${port} -p ${DBTOOL_BUILD_OUT} ${user}@${host}:/tmp/dbtool
-              ssh -p ${port} ${user}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
+            def archBinary = (host in ['book14', 'book16'] ? 'dbtool-arm64' : 'dbtool')
+              sh """
+                set -euo pipefail
+                ssh -p ${port} ${user}@${host} "sudo mkdir -p /usr/local/bin"
+                scp -P ${port} -p bin/${archBinary} ${user}@${host}:/tmp/dbtool
+                ssh -p ${port} ${user}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
+              """
             """
           }
         }
