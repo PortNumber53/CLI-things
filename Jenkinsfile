@@ -70,14 +70,12 @@ pipeline {
         sh '''
           set -euo pipefail
           # Ensure target directories exist
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p $(dirname ${DEPLOY_PATH}) && sudo chown ${DEPLOY_USER} $(dirname ${DEPLOY_PATH})"
-          # Copy the publicip binary
-          scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
-          # Copy the internalip binary
-          scp -p ${INTERNALIP_BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/cli-things/bin/internalip
-          # Ensure executable bit set
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x ${DEPLOY_PATH}"
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "chmod +x /opt/cli-things/bin/internalip"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p $(dirname ${DEPLOY_PATH})"
+          # Copy binaries to /tmp first, then sudo move into place (avoids scp failures when destination is root-owned)
+          scp -p ${BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/publicip
+          scp -p ${INTERNALIP_BUILD_OUT} ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/internalip
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip ${DEPLOY_PATH} && sudo chmod +x ${DEPLOY_PATH}"
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/internalip /opt/cli-things/bin/internalip && sudo chmod +x /opt/cli-things/bin/internalip"
           # Install/Update system-wide systemd unit and timers on primary host
           scp -p systemd/publicip.service systemd/publicip.timer \
                  systemd/publicip-collect.service systemd/publicip-collect.timer \
