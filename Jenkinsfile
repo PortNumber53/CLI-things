@@ -1,5 +1,5 @@
 def INSTALL_TARGETS = [
-  'dbtool'           : ['brain', 'crash', 'pinky', 'zenbook'],
+  'dbtool'           : ['book14', 'book16', 'brain', 'crash', 'pinky', 'zenbook'],
   'cloudflare-backup': ['crash'],
   'internalip'       : ['brain', 'crash', 'pinky', 'zenbook'],
 ]
