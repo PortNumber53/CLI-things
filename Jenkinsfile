@@ -119,11 +119,12 @@ pipeline {
           def cfHosts = INSTALL_TARGETS['cloudflare-backup'] ?: []
           for (host in cfHosts) {
             def port = HOST_SSH_PORTS[host] ?: '22'
+            def user = HOST_SSH_USERS.get(host, 'grimlock')
             sh """
               set -euo pipefail
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mkdir -p /opt/cli-things/bin"
-              scp -P ${port} -p ${CF_BUILD_OUT} ${DEPLOY_USER}@${host}:/opt/cli-things/bin/cloudflare-backup
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo chmod +x /opt/cli-things/bin/cloudflare-backup"
+              ssh -p ${port} ${user}@${host} "sudo mkdir -p /opt/cli-things/bin"
+              scp -P ${port} -p ${CF_BUILD_OUT} ${user}@${host}:/tmp/cloudflare-backup
+              ssh -p ${port} ${user}@${host} "sudo mv /tmp/cloudflare-backup /opt/cli-things/bin/cloudflare-backup && sudo chmod +x /opt/cli-things/bin/cloudflare-backup"
             """
           }
         }
@@ -154,14 +155,15 @@ pipeline {
           def internalipHosts = INSTALL_TARGETS['internalip'] ?: []
           for (host in internalipHosts) {
             def port = HOST_SSH_PORTS[host] ?: '22'
+            def user = HOST_SSH_USERS.get(host, 'grimlock')
             sh """
               set -euo pipefail
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mkdir -p /opt/cli-things/bin"
-              scp -P ${port} -p ${INTERNALIP_BUILD_OUT} ${DEPLOY_USER}@${host}:/opt/cli-things/bin/internalip
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo chmod +x /opt/cli-things/bin/internalip"
+              ssh -p ${port} ${user}@${host} "sudo mkdir -p /opt/cli-things/bin"
+              scp -P ${port} -p ${INTERNALIP_BUILD_OUT} ${user}@${host}:/tmp/internalip
+              ssh -p ${port} ${user}@${host} "sudo mv /tmp/internalip /opt/cli-things/bin/internalip && sudo chmod +x /opt/cli-things/bin/internalip"
               # Install systemd service and timer for internal IP capture
-              scp -P ${port} -p utility/internalip/internalip-capture.service utility/internalip/internalip-capture.timer ${DEPLOY_USER}@${host}:/tmp/
-              ssh -p ${port} ${DEPLOY_USER}@${host} "sudo mv /tmp/internalip-capture.service /etc/systemd/system/internalip-capture.service && \
+              scp -P ${port} -p utility/internalip/internalip-capture.service utility/internalip/internalip-capture.timer ${user}@${host}:/tmp/
+              ssh -p ${port} ${user}@${host} "sudo mv /tmp/internalip-capture.service /etc/systemd/system/internalip-capture.service && \
                                                      sudo mv /tmp/internalip-capture.timer /etc/systemd/system/internalip-capture.timer && \
                                                      sudo systemctl daemon-reload && \
                                                      sudo systemctl enable --now internalip-capture.timer"
