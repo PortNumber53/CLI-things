@@ -147,7 +147,6 @@ pipeline {
                 scp -P ${port} -p bin/${archBinary} ${user}@${host}:/tmp/dbtool
                 ssh -p ${port} ${user}@${host} "sudo mv /tmp/dbtool /usr/local/bin/dbtool && sudo chmod +x /usr/local/bin/dbtool"
               """
-            """
           }
         }
       }
