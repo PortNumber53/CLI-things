@@ -2,6 +2,7 @@ def INSTALL_TARGETS = [
   'dbtool'           : ['book14', 'book16', 'brain', 'crash', 'pinky', 'zenbook'],
   'cloudflare-backup': ['crash'],
   'internalip'       : ['brain', 'crash', 'pinky', 'zenbook'],
+  'env-anonymizer': ['book14', 'book16', 'zenbook'],
 ]
 
 // Optional per-host SSH port overrides (defaults to 22 when not specified)
@@ -38,6 +39,8 @@ pipeline {
     INTERNALIP_BUILD_DIR   = 'utility/internalip'
     INTERNALIP_BUILD_OUT   = 'bin/internalip'
 
+    ENV_ANON_BUILD_OUT = 'bin/env-anonymizer'
+
     DEPLOY_HOST = 'crash'
     DEPLOY_USER = 'grimlock'
     DEPLOY_PATH = '/opt/cli-things/bin/publicip'
@@ -57,15 +60,18 @@ pipeline {
         sh 'go build -o ${BUILD_OUT} ./${BUILD_DIR}'
         sh 'go build -o ${CF_BUILD_OUT} ./${CF_BUILD_DIR}'
         sh 'go build -o ${INTERNALIP_BUILD_OUT} ./${INTERNALIP_BUILD_DIR}'
+        sh 'go build -o ${ENV_ANON_BUILD_OUT} ./env-anonymizer.go'
         // Build dbtool using its dedicated main with the dbtool build tag,
         // so we get an executable binary (not a package archive).
         sh 'go build -tags dbtool -o ${DBTOOL_BUILD_OUT} ./dbtool.go'
         sh 'GOOS=darwin GOARCH=arm64 go build -tags dbtool -o bin/dbtool-arm64 ./dbtool.go'  // Add arm64 build for Apple Silicon
+        sh 'GOOS=darwin GOARCH=arm64 go build -o bin/env-anonymizer-arm64 ./env-anonymizer.go'
         sh 'file ${BUILD_OUT} || true'
         sh 'file ${CF_BUILD_OUT} || true'
         sh 'file ${INTERNALIP_BUILD_OUT} || true'
         sh 'file ${DBTOOL_BUILD_OUT} || true'
         sh 'file bin/dbtool-arm64 || true'
+        sh 'file bin/env-anonymizer-arm64 || true'
       }
     }
 
@@ -170,6 +176,25 @@ pipeline {
                                                      sudo mv /tmp/internalip-capture.timer /etc/systemd/system/internalip-capture.timer && \
                                                      sudo systemctl daemon-reload && \
                                                      sudo systemctl enable --now internalip-capture.timer"
+            """
+          }
+        }
+      }
+    }
+
+    stage('Deploy env-anonymizer') {
+      steps {
+        script {
+          def envAnonHosts = INSTALL_TARGETS['env-anonymizer'] ?: []
+          for (host in envAnonHosts) {
+            def port = HOST_SSH_PORTS[host] ?: '22'
+            def user = HOST_SSH_USERS.get(host, 'grimlock')
+            def archBinary = (host in ['book14', 'book16'] ? 'env-anonymizer-arm64' : 'env-anonymizer')
+            sh """
+              set -euo pipefail
+              ssh -p ${port} ${user}@${host} "sudo mkdir -p /usr/local/bin"
+              scp -P ${port} -p bin/${archBinary} ${user}@${host}:/tmp/env-anonymizer
+              ssh -p ${port} ${user}@${host} "sudo mv /tmp/env-anonymizer /usr/local/bin/env-anonymizer && sudo chmod +x /usr/local/bin/env-anonymizer"
             """
           }
         }
