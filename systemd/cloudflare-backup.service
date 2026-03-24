@@ -5,9 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-EnvironmentFile=/etc/cloudflare-backup/config.conf
-ExecStart=/usr/local/bin/go run ./utility/cloudflare-backup --timeout=60s
-User=publicip
+Environment=DBTOOL_CONFIG_FILE=/etc/cli-things/config.ini
+ExecStart=/opt/cli-things/bin/cloudflare-backup --timeout=60s
 
 [Install]
 WantedBy=multi-user.target

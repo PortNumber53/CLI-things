@@ -90,7 +90,6 @@ pipeline {
                  systemd/publicip-collect.service systemd/publicip-collect.timer \
                  systemd/publicip-sync.service systemd/publicip-sync.timer \
                  systemd/cloudflare-backup.service systemd/cloudflare-backup.timer \
-                 systemd/cloudflare-backup.conf.sample \
                  utility/internalip/internalip-capture.service utility/internalip/internalip-capture.timer \
                  ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mv /tmp/publicip.service /etc/systemd/system/publicip.service && \
@@ -103,12 +102,10 @@ pipeline {
                                              sudo mv /tmp/cloudflare-backup.timer /etc/systemd/system/cloudflare-backup.timer && \
                                              sudo mv /tmp/internalip-capture.service /etc/systemd/system/internalip-capture.service && \
                                              sudo mv /tmp/internalip-capture.timer /etc/systemd/system/internalip-capture.timer"
-          # Ensure environment directory exists and seed env file if absent
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things && sudo mkdir -p /etc/cloudflare-backup"
-          scp -p systemd/publicip.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/publicip.conf.sample
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cli-things/publicip.conf ]; then sudo mv /tmp/publicip.conf.sample /etc/cli-things/publicip.conf; else sudo rm -f /tmp/publicip.conf.sample; fi"
-          scp -p systemd/cloudflare-backup.conf.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/cloudflare-backup.conf.sample
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cloudflare-backup/config.conf ]; then sudo mv /tmp/cloudflare-backup.conf.sample /etc/cloudflare-backup/config.conf; else sudo rm -f /tmp/cloudflare-backup.conf.sample; fi"
+          # Ensure config directory exists and seed unified config.ini if absent
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo mkdir -p /etc/cli-things"
+          scp -p systemd/config.ini.sample ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/config.ini.sample
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "if [ ! -f /etc/cli-things/config.ini ]; then sudo mv /tmp/config.ini.sample /etc/cli-things/config.ini; else sudo rm -f /tmp/config.ini.sample; fi"
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl daemon-reload"
           # Enable and start the timers (system-wide)
           ssh ${DEPLOY_USER}@${DEPLOY_HOST} "sudo systemctl enable --now publicip.timer publicip-collect.timer publicip-sync.timer cloudflare-backup.timer internalip-capture.timer"
@@ -156,7 +153,7 @@ pipeline {
             ssh -p 22 grimlock@crash "sudo mkdir -p /opt/cli-things/migrations"
             scp -P 22 -p migrations/*.sql grimlock@crash:/tmp/
             ssh -p 22 grimlock@crash "sudo mv /tmp/*.sql /opt/cli-things/migrations/ && sudo chmod 644 /opt/cli-things/migrations/*.sql"
-            ssh -p 22 grimlock@crash "DB_MIGRATIONS_DIR=/opt/cli-things/migrations /usr/local/bin/dbtool migrate"
+            ssh -p 22 grimlock@crash "DBTOOL_CONFIG_FILE=/etc/cli-things/config.ini /usr/local/bin/dbtool migrate"
           """
         }
       }

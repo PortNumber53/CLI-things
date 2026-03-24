@@ -1,0 +1,22 @@
+[default]
+# CLI-things unified configuration
+# Copy to /etc/cli-things/config.ini and fill in values
+
+# Database connection (set either DATABASE_URL or discrete DB_* values)
+# Example PostgreSQL DSN (preferred):
+# DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
+DATABASE_URL=
+
+# Optional discrete settings if not using DATABASE_URL
+# DB_HOST=
+# DB_PORT=5432
+# DB_NAME=
+# DB_USER=
+# DB_PASSWORD=
+# DB_SSLMODE=disable
+
+# Migrations directory
+DB_MIGRATIONS_DIR=/opt/cli-things/migrations
+
+# Cloudflare API token with Zone:Read and DNS:Edit permissions
+CLOUDFLARE_API_KEY=
