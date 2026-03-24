@@ -2,6 +2,7 @@ package dbtool
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,46 +13,55 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/lib/pq"
 	dbconf "cli-things/utility/dbconf"
+
+	_ "github.com/lib/pq"
 )
 
 func isVerbose() bool { return strings.TrimSpace(os.Getenv("DBTOOL_VERBOSE")) == "1" }
 
 // RunPSQLInline executes a single SQL statement against a database using psql -c
 func RunPSQLInline(dbname, sqlText string) error {
-    cfg, err := GetDBConfig()
-    if err != nil {
-        return err
-    }
-    // If we have a DSN URL, prefer using it directly with -d
-    var args []string
-    if u := strings.TrimSpace(cfg.URL); strings.HasPrefix(strings.ToLower(u), "postgres://") || strings.HasPrefix(strings.ToLower(u), "postgresql://") {
-        dsn := u
-        if newURL, ok := overrideDBNameInPostgresURL(u, dbname); ok {
-            dsn = newURL
-        }
-        args = []string{"-d", dsn, "-c", sqlText}
-    } else {
-        args = []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-c", sqlText}
-    }
-    cmd := exec.Command("psql", args...)
-    env := os.Environ()
-    if cfg.URL == "" {
-        env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
-        if cfg.SSLMode != "" {
-            env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
-        }
-    }
-    cmd.Env = env
-    cmd.Stdout = os.Stdout
-    cmd.Stderr = os.Stderr
-    return cmd.Run()
+	cfg, err := GetDBConfig()
+	if err != nil {
+		return err
+	}
+	// If we have a DSN URL, prefer using it directly with -d
+	var args []string
+	if u := strings.TrimSpace(cfg.URL); strings.HasPrefix(strings.ToLower(u), "postgres://") || strings.HasPrefix(strings.ToLower(u), "postgresql://") {
+		dsn := u
+		if newURL, ok := overrideDBNameInPostgresURL(u, dbname); ok {
+			dsn = newURL
+		}
+		args = []string{"-d", dsn, "-c", sqlText}
+	} else {
+		args = []string{"-h", cfg.Host, "-p", cfg.Port, "-U", cfg.User, "-d", dbname, "-c", sqlText}
+	}
+	cmd := exec.Command("psql", args...)
+	env := os.Environ()
+	if cfg.URL == "" {
+		env = append(env, fmt.Sprintf("PGPASSWORD=%s", cfg.Password))
+		if cfg.SSLMode != "" {
+			env = append(env, fmt.Sprintf("PGSSLMODE=%s", cfg.SSLMode))
+		}
+	}
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
-func vprintln(a ...any) { if isVerbose() { fmt.Fprintln(os.Stderr, a...) } }
+func vprintln(a ...any) {
+	if isVerbose() {
+		fmt.Fprintln(os.Stderr, a...)
+	}
+}
 
-func vprintf(format string, a ...any) { if isVerbose() { fmt.Fprintf(os.Stderr, format, a...) } }
+func vprintf(format string, a ...any) {
+	if isVerbose() {
+		fmt.Fprintf(os.Stderr, format, a...)
+	}
+}
 
 // printConnectionInfo logs which host/port/user/db will be used.
 // If a URL DSN is present, it parses it to extract values. If dbOverride is
@@ -333,19 +343,21 @@ func ConnectDB() (*sql.DB, error) { return dbconf.ConnectDB() }
 
 // GetDBConfig returns the database configuration
 func GetDBConfig() (*DBConfig, error) {
-    // Wrap conf.GetDBConfig to preserve return type. Map fields into local DBConfig.
-    c, err := dbconf.GetDBConfig()
-    if err != nil { return nil, err }
-    return &DBConfig{
-        Host: c.Host,
-        Port: c.Port,
-        Name: c.Name,
-        User: c.User,
-        Password: c.Password,
-        SSLMode: c.SSLMode,
-        MigrationsDir: c.MigrationsDir,
-        URL: c.URL,
-    }, nil
+	// Wrap conf.GetDBConfig to preserve return type. Map fields into local DBConfig.
+	c, err := dbconf.GetDBConfig()
+	if err != nil {
+		return nil, err
+	}
+	return &DBConfig{
+		Host:          c.Host,
+		Port:          c.Port,
+		Name:          c.Name,
+		User:          c.User,
+		Password:      c.Password,
+		SSLMode:       c.SSLMode,
+		MigrationsDir: c.MigrationsDir,
+		URL:           c.URL,
+	}, nil
 }
 
 // ConnectDBAs connects to a specific database overriding the name
@@ -513,6 +525,11 @@ func ImportDatabase(dbname, filepath string, overwrite bool) error {
 		}
 	}
 	return RunPSQLFile(dbname, filepath)
+}
+
+// RunMigrations applies all pending SQL migrations from the configured migrations directory
+func RunMigrations(dbname string) error {
+	return dbconf.ApplyConfiguredMigrations(context.Background(), dbname)
 }
 
 // QueryDatabase runs a SQL statement and prints output; optionally JSON

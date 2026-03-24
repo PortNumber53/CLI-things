@@ -144,6 +144,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  database|db reset|wipe <dbname> [--noconfirm]\n")
 	fmt.Fprintf(os.Stderr, "  table|tables list|ls [<dbname>] [--schema=<schema>]\n")
 	fmt.Fprintf(os.Stderr, "  query|q [<dbname>] --query=\"<sql>\" [--json]\n")
+	fmt.Fprintf(os.Stderr, "  migrate [<dbname>]\n")
 	fmt.Fprintf(os.Stderr, "  help [command] [subcommand]\n")
 	fmt.Fprintf(os.Stderr, "\nGlobal flags:\n")
 	fmt.Fprintf(os.Stderr, "  -v, --verbose   Show diagnostics about .env and config.ini resolution\n")
@@ -160,6 +161,7 @@ func helpSummary() {
 	fmt.Println("  table (tables)")
 	fmt.Println("    list (ls) [<dbname>] [--schema=<schema>]")
 	fmt.Println("  query (q) [<dbname>] --query=\"<sql>\" [--json]")
+	fmt.Println("  migrate [<dbname>]")
 	fmt.Println("  help [command] [subcommand]")
 }
 
@@ -214,6 +216,8 @@ func normalizeMain(s string) string {
 		return "table"
 	case "query", "q":
 		return "query"
+	case "migrate":
+		return "migrate"
 	case "help", "h", "--help", "-h":
 		return "help"
 	default:
@@ -465,6 +469,27 @@ func main() {
 			fmt.Fprintf(os.Stderr, "query failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "migrate":
+		if len(os.Args) >= 3 && isHelpToken(os.Args[2]) {
+			fmt.Println("Usage: migrate [<dbname>]")
+			return
+		}
+		var dbname string
+		if len(os.Args) >= 3 {
+			dbname = os.Args[2]
+		} else {
+			var err error
+			dbname, err = db.DefaultDBName()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(2)
+			}
+		}
+		if err := db.RunMigrations(dbname); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Migrations applied to database %q\n", dbname)
 	default:
 		usage()
 		os.Exit(2)
