@@ -1,14 +1,13 @@
 def INSTALL_TARGETS = [
-  'dbtool'           : ['book14', 'book16', 'brain', 'crash', 'pinky', 'zenbook'],
+  'dbtool'           : ['book14', 'book16', 'brain', 'crash', 'zenbook'],
   'cloudflare-backup': ['crash'],
-  'internalip'       : ['brain', 'crash', 'pinky', 'zenbook'],
+  'internalip'       : ['brain', 'crash', 'zenbook'],
   'env-anonymizer': ['book14', 'book16', 'zenbook'],
 ]
 
 // Optional per-host SSH port overrides (defaults to 22 when not specified)
 def HOST_SSH_PORTS = [
   'brain' : '22040',
-  'pinky' : '22050',
   'zenbook': '22070',
 ]
 
