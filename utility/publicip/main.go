@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -532,6 +533,10 @@ ON CONFLICT (ip) DO UPDATE SET
 		}
 		currentIP, err := getCurrentStoredIP(ctx, dbname)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				fmt.Fprintln(os.Stderr, "cf: no stored IP yet, skipping sync")
+				os.Exit(0)
+			}
 			fmt.Fprintln(os.Stderr, "cf error: cannot get current stored ip:", err)
 			os.Exit(1)
 		}
