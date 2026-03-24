@@ -384,6 +384,15 @@ func main() {
 	flag.BoolVar(&forceSync, "force", false, "force Cloudflare update even if DB history matches desired IP")
 	flag.Parse()
 
+	// Load CLOUDFLARE_API_KEY from config file if not already in environment
+	if strings.TrimSpace(os.Getenv("CLOUDFLARE_API_KEY")) == "" {
+		if raw, err := dbconf.GetRawConfig(); err == nil {
+			if v := strings.TrimSpace(raw["CLOUDFLARE_API_KEY"]); v != "" {
+				os.Setenv("CLOUDFLARE_API_KEY", v)
+			}
+		}
+	}
+
 	// Ensure tables if doing DB-related actions
 	if store || syncCF || deprecatedCheckCF || collectCF || initDNSTargets {
 		// Resolve DB name
