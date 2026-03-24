@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -52,7 +53,7 @@ type cfDNSResp struct {
 
 func cfGetARecords(ctx context.Context, token, zoneID, fqdn string) ([]cfDNSRecord, error) {
 	var dr cfDNSResp
-	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records?type=A&name=" + fqdn
+	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records?type=A&name=" + url.QueryEscape(fqdn)
 	if err := cfDoWithRetry(ctx, http.MethodGet, url, token, nil, &dr, 3, 500*time.Millisecond); err != nil {
 		return nil, err
 	}
@@ -148,7 +149,7 @@ func cfFindZoneID(ctx context.Context, token, zoneName string) (string, error) {
 
 func cfGetARecord(ctx context.Context, token, zoneID, fqdn string) (*cfDNSRecord, error) {
 	var dr cfDNSResp
-	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records?type=A&name=" + fqdn
+	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + "/dns_records?type=A&name=" + url.QueryEscape(fqdn)
 	if err := cfDoWithRetry(ctx, http.MethodGet, url, token, nil, &dr, 3, 500*time.Millisecond); err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+Environment=DBTOOL_CONFIG_FILE=/etc/cli-things/config.ini
 ExecStart=/opt/cli-things/bin/internalip -store
 User=grimlock
 Group=grimlock
